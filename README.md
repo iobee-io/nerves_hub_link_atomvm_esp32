@@ -220,23 +220,7 @@ nothing before it moves, and both ends compute the same range without agreeing
 on anything else. It is a data file, the class AtomVM skips when looking for
 code, so a signed archive still boots on a stock VM.
 
-From Elixir:
-
-```
-mix nerves_hub.sign --key ~/keys/fwup-key.priv
-```
-
-That signs `<app>.avm` in place and verifies the result before it can be
-uploaded. `--check` reports on an archive without changing it. Chaining it onto
-the packbeam alias makes signing something nobody can forget:
-
-```elixir
-aliases: [
-  "atomvm.packbeam": ["atomvm.application_bin", "atomvm.packbeam", "nerves_hub.sign"]
-]
-```
-
-From Erlang, `nh-avm` does the same:
+`nh-avm` signs and verifies:
 
 ```
 nh-avm sign   --key fwup-key.priv --in app.avm --out app-signed.avm
@@ -244,10 +228,11 @@ nh-avm verify --key fwup-key.pub  --in app-signed.avm
 nh-avm keygen --priv my.priv --pub my.pub
 ```
 
-Both read a key file through `nh_signature:private_key/1`, so they cannot come
-to different conclusions about what a key is. Give either a path, never the key
-itself: a key in an environment variable is readable in process listings and
-tends to end up in CI logs.
+Give it a path, never the key itself: a key in an environment variable is
+readable in process listings and tends to end up in CI logs.
+
+`nh_signature:sign/2` and `nh_signature:private_key/1` are the same thing
+without the command line, for anything that would rather not shell out.
 
 Verification on the device needs an AtomVM built with `AVM_USE_LIBSODIUM=ON`,
 which is off by default. Without it a device configured with keys reports

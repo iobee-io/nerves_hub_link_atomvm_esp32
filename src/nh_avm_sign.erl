@@ -101,8 +101,8 @@ keygen(#{priv := PrivPath, pub := PubPath}) ->
 
 %% ------------------------------------------------------------------- keys
 
-%% Parsing lives in `nh_signature' so that this and `mix nerves_hub.sign' read
-%% a key file the same way.
+%% Parsing lives in `nh_signature' so that anything else reading a key file
+%% reaches the same conclusion this does.
 read_private_key(Path) ->
     case nh_signature:private_key(read_file(Path)) of
         {ok, Seed} -> Seed;
