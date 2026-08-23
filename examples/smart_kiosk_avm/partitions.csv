@@ -1,0 +1,14 @@
+# Flash layout for a NervesHub device running AtomVM, on 4MB.
+#
+# Two packbeam slots so an update never writes over the running application.
+# `main.avm` keeps the name `esp32init` falls back to when NVS holds no boot
+# path, so a freshly flashed device boots with nothing provisioned; `alt.avm` is
+# the one an update has to be told about. See nh_slots.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x1C0000,
+boot.avm,   data, phy,     0x1D0000, 0x80000,
+main.avm,   data, phy,     0x250000, 0xD8000,
+alt.avm,    data, phy,     0x328000, 0xD8000,

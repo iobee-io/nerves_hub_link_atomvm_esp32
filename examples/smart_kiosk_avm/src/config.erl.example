@@ -1,0 +1,31 @@
+%
+% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
+%
+% Copy to config.erl and fill in. That file is not committed: it holds a WiFi
+% password and a NervesHub shared secret, both of which are credentials.
+%
+% Bench configuration. Not for anything reachable from a network you do not
+% control: ws:// sends the authentication headers in clear.
+%
+-module(config).
+
+-export([get/0]).
+
+get() ->
+    #{
+        sta => [
+            {ssid, "your-network"},
+            {psk, "your-password"}
+        ],
+        %% Only needed for a server other than the hosted one -- the path and
+        %% query are filled in. Leave it out entirely for
+        %% devices.nervescloud.com over wss, and then set `verify' in
+        %% smart_kiosk_avm.erl to match.
+        url => "ws://192.168.1.1:4000",
+        identifier => <<"esp32-example">>,
+        %% The onboard LED on most ESP32 dev boards. If identify does not
+        %% blink anything, this is the first thing to change.
+        led_pin => 2,
+        %% Product -> Devices -> Add, with "shared secret" authentication.
+        shared_secret => {<<"nhp_...">>, <<"...">>}
+    }.

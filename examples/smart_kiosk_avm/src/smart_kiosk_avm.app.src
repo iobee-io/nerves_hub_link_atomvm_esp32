@@ -1,0 +1,8 @@
+{application, smart_kiosk_avm, [
+    {description, "NervesHub on AtomVM, on an ESP32"},
+    {vsn, "0.2.4"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {env, []},
+    {modules, []}
+]}.

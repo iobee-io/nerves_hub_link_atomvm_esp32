@@ -1,0 +1,29 @@
+defmodule Config do
+  @moduledoc """
+  Copy to config.ex and fill in. That file is not committed: it holds a WiFi
+  password and a NervesHub shared secret, both of which are credentials.
+
+  Bench configuration. Not for anything reachable from a network you do not
+  control: ws:// sends the authentication headers in clear.
+  """
+
+  def get do
+    %{
+      sta: [ssid: ~c"your-network", psk: ~c"your-password"],
+      # Only needed for a server other than the hosted one -- the path and
+      # query are filled in. Leave it out entirely for
+      # devices.nervescloud.com over wss, and then set `verify` in
+      # smart_kiosk_ex.ex to match.
+      url: ~c"ws://192.168.1.1:4000",
+      identifier: "esp32-example",
+      # The onboard LED on most ESP32 dev boards.
+      led_pin: 2,
+      # The organization's Ed25519 public keys, exactly as fwup writes them.
+      # Configuring these is what makes the device require signed firmware;
+      # leave the list empty to install whatever NervesHub sends.
+      firmware_keys: [],
+      # Product -> Devices -> Add, with "shared secret" authentication.
+      shared_secret: {"nhp_...", "..."}
+    }
+  end
+end
