@@ -27,25 +27,9 @@ device configured with `firmware_keys` reports `verification_unavailable`
 rather than accepting an update it cannot check. Leaving either out is a
 supported choice.
 
-The three files those edits need ship in `priv/atomvm`, so they arrive with the
-dependency rather than having to be copied out of a README.
+The three files those edits need ship in `priv/atomvm`.
 
-### From Elixir
-
-```
-. $IDF_PATH/export.sh
-mix nerves_hub.atomvm.vm ~/src/AtomVM ~/src/atomvm_websocket_client
-```
-
-That task is in
-[nerves_hub_link_atomvm_esp32_ex](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32_ex).
-`--dry-run` prints what it would copy and run without touching anything, and
-`--no-libsodium` skips Ed25519 and leaves the update slots in place.
-
-### From Erlang
-
-There is no equivalent command, and a rebar3 plugin would be a package of
-machinery for copying two files. After `rebar3 compile` the files are at
+After `rebar3 compile` the files are at
 `_build/default/lib/nerves_hub_link_atomvm_esp32/priv/atomvm`:
 
 ```
@@ -73,7 +57,7 @@ ESP-IDF v5.2 to v5.5 for either route. AtomVM does not build against v6:
 mbedTLS 4.x moved `mbedtls/ctr_drbg.h`, and GCC 15 rejects the gperf-generated
 tables.
 
-### Flashing what comes out
+### Flashing your device
 
 ```
 cd <AtomVM>/src/platforms/esp32
@@ -117,14 +101,6 @@ mean writing NVS before a device would start at all.
 `priv/atomvm/partitions.csv` carries the same table with those reasons beside
 each line.
 
-### Upstream
-
-Two of these are arguably AtomVM bugs rather than choices, and are worth fixing
-there. `AVM_USE_LIBSODIUM=ON` cannot link, because the repository ships no
-`idf_component.yml` declaring the dependency the option needs. And turning that
-option on overflows the default 3584-byte main task stack, with no note
-anywhere that it needs raising. Neither is filed yet.
-
 ## Usage
 
 ```erlang
@@ -161,27 +137,14 @@ nerves_hub_link:update_failed(Pid, <<"flash write failed">>).
 
 ### Where it connects
 
-Nothing above says where, because there is only one URL a device sensibly wants
-and it can be worked out. `host` names a different server, `url` takes one
-written out in as much detail as you like, and whatever is missing is filled in:
-
 | Config | Result |
 | --- | --- |
 | (nothing) | `wss://devices.nervescloud.com/device-socket/websocket?vsn=2.0.0` |
 | `host => "nh.example.com"` | `wss://nh.example.com/device-socket/websocket?vsn=2.0.0` |
 | `url => "ws://192.168.1.10:4000"` | `ws://192.168.1.10:4000/device-socket/websocket?vsn=2.0.0` |
 
-Anything already written is kept, so a URL given in full passes through
-untouched and an unusual mount point survives. Giving both `url` and `host` is
-an error rather than a precedence rule.
-
-The path depends on how the device authenticates. NervesHub runs two endpoints
-and mounts the device socket on both: a client certificate reaches the device
-endpoint, where it is at `/socket`, and a shared secret goes through the web
-endpoint, where `/socket` is already the browser socket and the device socket is
-at `/device-socket`. Neither path implies an authentication method by itself,
-since the server reads a certificate if the connection presents one and the
-headers otherwise.
+Anything already written is kept, so a URL given in full passes through untouched
+and an unusual mount point survives. Giving both `url` and `host` will raise an error.
 
 ### Authentication
 
@@ -329,10 +292,7 @@ mechanism on a different schedule.
 
 `boot` can be the default because it is not a guess. AtomVM's `esp32init`
 records where it booted from in NVS under `atomvm`/`boot_path`, so the agent
-reads the answer and stays right after an update that switched slots. This is
-the one place AtomVM is *better* off than ESP-IDF, where a device cannot ask
-which of `ota_0`/`ota_1` it is running because there is no
-`esp_ota_get_running_partition()` binding.
+reads the answer and stays right after an update that switched slots.
 
 A device that cannot read its firmware description refuses to start rather than
 connecting without one, which would look like a healthy device that never needs
@@ -354,16 +314,6 @@ State0 = nh_channel:new(JoinParams),
 {send, Binary}   %% write this to the socket
 {event, Term}    %% tell the application this happened
 ```
-
-Being pure is what let the protocol be tested against a real NervesHub from a
-desktop, over an unrelated WebSocket client, before any of it ran on a device.
-
-Two details the wire format makes easy to get wrong, both covered by tests:
-
-* The device joins the topic `device`, unqualified. NervesHub's serializer
-  rewrites it to `device:<id>` on the way in.
-* Heartbeats go to `phoenix` with a `null` join reference, not to the device
-  topic.
 
 A channel does not survive a socket reconnect, so `connected/1` must be called
 on every connection. A client that reconnects the socket without rejoining looks
