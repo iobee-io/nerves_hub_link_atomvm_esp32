@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A push that lands while an earlier run is still going makes that run
+# irrelevant, and a device library is not worth queueing minutes for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: OTP ${{ matrix.otp }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # OTP 27 is the floor: the channel encodes with the `json` module,
+        # which arrived in 27 and which AtomVM also ships. On 26 it does not
+        # exist, and the failure is 45 tests deep rather than a clear error.
+        otp: ["27", "28"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          rebar3-version: "3.25.0"
+
+      - uses: actions/cache@v4
+        with:
+          path: _build
+          key: ${{ runner.os }}-otp${{ matrix.otp }}-build-${{ hashFiles('rebar.config') }}
+          restore-keys: ${{ runner.os }}-otp${{ matrix.otp }}-build-
+
+      - run: rebar3 compile
+
+      - run: rebar3 eunit
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          rebar3-version: "3.25.0"
+
+      - run: rebar3 fmt --check
+
+  signing:
+    name: Signing tool
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          rebar3-version: "3.25.0"
+
+      - run: rebar3 escriptize
+
+      # The escript is a shipped artifact and it is what signs firmware, so a
+      # round trip is worth more here than a unit test: it exercises the CLI,
+      # the key files it writes, and the signature format together.
+      - name: Sign and verify a packbeam
+        run: |
+          set -euo pipefail
+          nh_avm=_build/default/bin/nh-avm
+
+          # The smallest valid archive: the magic and the terminator entry.
+          printf '#!/usr/bin/env AtomVM\n\0\0' > min.avm
+          printf '\0%.0s' $(seq 1 12) >> min.avm
+          printf 'end\0' >> min.avm
+
+          $nh_avm keygen --priv ci.priv --pub ci.pub
+          $nh_avm sign   --key ci.priv --in min.avm --out signed.avm
+          $nh_avm verify --key ci.pub  --in signed.avm
+
+          # Refusing is the half that matters, and it has to be refused for
+          # the right reason. A byte flipped inside the signature leaves a
+          # well formed archive carrying a signature that does not check out,
+          # so this fails on the cryptography rather than on the parse.
+          cp signed.avm flipped.avm
+          printf 'X' | dd of=flipped.avm bs=1 seek=100 count=1 conv=notrunc
+          if $nh_avm verify --key ci.pub --in flipped.avm; then
+            echo "a modified signature verified, which it must not" >&2
+            exit 1
+          fi
+
+          # And that verification is against the key rather than merely
+          # present: a valid signature by someone else is still a refusal.
+          $nh_avm keygen --priv other.priv --pub other.pub
+          if $nh_avm verify --key other.pub --in signed.avm; then
+            echo "another key verified, which it must not" >&2
+            exit 1
+          fi
