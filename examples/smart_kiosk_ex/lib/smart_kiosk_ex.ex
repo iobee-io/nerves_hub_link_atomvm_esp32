@@ -38,8 +38,10 @@ defmodule SmartKioskEx do
     url = config.url
     IO.puts("Connecting to #{url}")
 
+    # A keyword list rather than a map, which the agent takes either of. This is
+    # what an Elixir caller writes.
     {:ok, agent} =
-      :nerves_hub_link.start(%{
+      :nerves_hub_link.start(
         url: url,
         identifier: config.identifier,
         shared_secret: config.shared_secret,
@@ -52,7 +54,7 @@ defmodule SmartKioskEx do
         # Everything this process prints from here on also goes to NervesHub,
         # and so does everything the processes it spawns print.
         capture_io: true
-      })
+      )
 
     loop(agent, config)
   end
@@ -135,12 +137,12 @@ defmodule SmartKioskEx do
 
         loop(agent, config)
 
-      {:nerves_hub, {:identify}} ->
+      {:nerves_hub, :identify} ->
         IO.puts("\n*** IDENTIFY ***\n")
         spawn(fn -> blink(Map.get(config, :led_pin, 2)) end)
         loop(agent, config)
 
-      {:nerves_hub, {:reboot_requested}} ->
+      {:nerves_hub, :reboot_requested} ->
         IO.puts("REBOOT requested by NervesHub")
         loop(agent, config)
 
@@ -148,7 +150,7 @@ defmodule SmartKioskEx do
         IO.puts("KEYS: #{count} firmware key(s) after the server's")
         loop(agent, config)
 
-      {:nerves_hub, {:console_joined}} ->
+      {:nerves_hub, :console_joined} ->
         IO.puts("CONSOLE: attached")
         loop(agent, config)
 

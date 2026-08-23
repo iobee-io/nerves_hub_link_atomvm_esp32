@@ -251,7 +251,7 @@ handle_event({message, <<"extensions">>, Event, Payload}, State) ->
     {Extensions, Actions} = nh_extensions:handle_event(Event, Payload, maps:get(extensions, State)),
     run_extension_actions(Actions, State#{extensions => Extensions});
 handle_event({joined, <<"console">>, _Response}, State) ->
-    notify(State, {console_joined}),
+    notify(State, console_joined),
     console_out(nh_console:banner(), State);
 handle_event({joined, Topic, Response}, State) ->
     notify(State, {joined, Topic, Response}),
@@ -298,7 +298,7 @@ handle_event({message, _Topic, <<"fwup_public_keys">>, Payload}, State) ->
     notify(State, {firmware_keys, length(Keys)}),
     State#{firmware_keys => stash_keys(Keys)};
 handle_event({message, _Topic, <<"reboot">>, _Payload}, State) ->
-    notify(State, {reboot_requested}),
+    notify(State, reboot_requested),
     State1 = push_event(<<"rebooting">>, #{}, State),
 
     case maps:get(reboot, State1, auto) of
@@ -308,7 +308,7 @@ handle_event({message, _Topic, <<"reboot">>, _Payload}, State) ->
 %% Only the application knows what identifying looks like on its hardware --
 %% an LED, a buzzer, a line on a display -- so this is reported, not acted on.
 handle_event({message, _Topic, <<"identify">>, _Payload}, State) ->
-    notify(State, {identify}),
+    notify(State, identify),
     State;
 handle_event({message, _Topic, <<"update">>, Payload}, State) ->
     notify(State, {message, <<"update">>, Payload}),

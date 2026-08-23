@@ -494,7 +494,7 @@ identify_is_reported_to_the_application_test() ->
     {Agent, JoinRef} = join_device(),
 
     send_device(Agent, JoinRef, <<"identify">>),
-    ?assertEqual({identify}, next_event(1000)),
+    ?assertEqual(identify, next_event(1000)),
 
     %% and nothing is sent back: NervesHub asks, it does not wait for an answer
     ?assertEqual(nothing_sent, next_sent(300)),
@@ -506,7 +506,7 @@ reboot_announces_itself_before_going_test() ->
     {Agent, JoinRef} = join_device(#{reboot => manual}),
 
     send_device(Agent, JoinRef, <<"reboot">>),
-    ?assertEqual({reboot_requested}, next_event(1000)),
+    ?assertEqual(reboot_requested, next_event(1000)),
 
     [_, _, <<"device">>, Event, _] = json:decode(next_sent(1000)),
     ?assertEqual(<<"rebooting">>, Event),
@@ -519,7 +519,7 @@ manual_reboot_leaves_the_device_running_test() ->
     {Agent, JoinRef} = join_device(#{reboot => manual}),
 
     send_device(Agent, JoinRef, <<"reboot">>),
-    ?assertEqual({reboot_requested}, next_event(1000)),
+    ?assertEqual(reboot_requested, next_event(1000)),
     _ = next_sent(1000),
 
     %% still answering afterwards

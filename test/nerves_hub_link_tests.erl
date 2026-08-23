@@ -71,6 +71,19 @@ a_config_that_cannot_build_a_url_is_refused_test() ->
         nerves_hub_link:start(config(#{host => <<"nh.example.com">>}))
     ).
 
+%% What an Elixir caller writes. The library is meant to be usable from Elixir
+%% without a wrapper in between, and a map with atom keys is not what anyone
+%% reaches for there first.
+a_keyword_list_works_as_well_as_a_map_test() ->
+    ?assertMatch({ok, _Pid}, nerves_hub_link:start(maps:to_list(config(#{})))).
+
+%% The list is turned into the same config, not a second code path: an option
+%% given as a keyword has to behave exactly as it does in a map.
+a_keyword_list_is_validated_the_same_way_test() ->
+    Config = maps:to_list(maps:remove(identifier, config(#{}))),
+
+    ?assertEqual({error, {missing_config, [identifier]}}, nerves_hub_link:start(Config)).
+
 %% An identifier has no default that could be right, so it stays required.
 requires_an_identifier_test() ->
     ?assertMatch(

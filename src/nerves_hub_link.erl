@@ -13,6 +13,13 @@
 %% }).
 %% '''
 %%
+%% A keyword list works as well as a map, which is what an Elixir caller will
+%% write:
+%%
+%% ```
+%% :nerves_hub_link.start(identifier: "my-device", shared_secret: {key, secret})
+%% '''
+%%
 %% == Where it connects ==
 %%
 %% Nothing above says where, because there is only one URL a device sensibly
@@ -44,9 +51,9 @@
 %% {update_ready, Slot}         %% written and armed; reboot when ready
 %% {update_failed, Reason}
 %% {firmware_committed, Slot}   %% the running update proved itself
-%% {identify}                   %% blink something
-%% {reboot_requested}
-%% {console_joined}
+%% identify                     %% blink something
+%% reboot_requested
+%% console_joined
 %% {disconnected, Reason}
 %% {transport_error, Reason}
 %% '''
@@ -78,10 +85,10 @@
 %% messages on the device topic and one does not:
 %%
 %% <ul>
-%%   <li>`identify' is reported as `{identify}'. Only the application knows what
+%%   <li>`identify' is passed straight through. Only the application knows what
 %%       identifying looks like on its hardware, so nothing is done for it.</li>
 %%   <li>`reboot' announces itself with `rebooting' and then restarts the
-%%       device. `reboot => manual' reports `{reboot_requested}' and leaves the
+%%       device. `reboot => manual' reports `reboot_requested' and leaves the
 %%       decision alone.</li>
 %%   <li>`reconnect' is not a device message at all — NervesHub drops the
 %%       socket and the transport reconnects, so there is nothing to
@@ -226,13 +233,13 @@
 %% @doc Connect, linked to the calling process.
 %% @end
 %%-----------------------------------------------------------------------------
--spec start_link(config()) -> {ok, pid()} | {error, term()}.
+-spec start_link(config() | [{atom(), term()}]) -> {ok, pid()} | {error, term()}.
 start_link(Config) ->
-    with_agent_config(Config, fun nh_agent:start_link/1).
+    with_agent_config(options(Config), fun nh_agent:start_link/1).
 
--spec start(config()) -> {ok, pid()} | {error, term()}.
+-spec start(config() | [{atom(), term()}]) -> {ok, pid()} | {error, term()}.
 start(Config) ->
-    with_agent_config(Config, fun nh_agent:start/1).
+    with_agent_config(options(Config), fun nh_agent:start/1).
 
 -spec stop(pid()) -> ok.
 stop(Pid) ->
@@ -309,6 +316,11 @@ push(Pid, Event, Payload) ->
     ok.
 
 %% ------------------------------------------------------------------- internals
+
+%% A keyword list is what an Elixir caller reaches for, and this library is
+%% meant to be usable from Elixir without a wrapper in between.
+options(Config) when is_map(Config) -> Config;
+options(Config) when is_list(Config) -> maps:from_list(Config).
 
 with_agent_config(Config, Start) ->
     case validate(Config) of

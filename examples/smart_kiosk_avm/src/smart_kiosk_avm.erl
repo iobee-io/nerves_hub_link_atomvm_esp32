@@ -130,16 +130,16 @@ loop(Agent) ->
                 })
             ]),
             loop(Agent);
-        {nerves_hub, {identify}} ->
+        {nerves_hub, identify} ->
             io:format("~n*** IDENTIFY ***~n~n"),
             %% In its own process: an operator watching for a blink should not
             %% be waiting on whatever else this loop is doing.
             _ = spawn(fun() -> blink(maps:get(led_pin, config:get(), 2)) end),
             loop(Agent);
-        {nerves_hub, {reboot_requested}} ->
+        {nerves_hub, reboot_requested} ->
             io:format("REBOOT requested by NervesHub~n"),
             loop(Agent);
-        {nerves_hub, {console_joined}} ->
+        {nerves_hub, console_joined} ->
             io:format("CONSOLE: attached~n"),
             loop(Agent);
         {nerves_hub, {update_started, _Pid}} ->

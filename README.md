@@ -25,9 +25,9 @@ The calling process receives `{nerves_hub, Event}`:
 | `{update_ready, Slot}` | Written and armed; reboot when convenient |
 | `{update_failed, Reason}` | Refused, or the write failed |
 | `{firmware_committed, Slot}` | The running update proved itself |
-| `{identify}` | Blink something |
-| `{reboot_requested}` | Only with `reboot => manual` |
-| `{console_joined}` | Someone opened the console |
+| `identify` | Blink something |
+| `reboot_requested` | Only with `reboot => manual` |
+| `console_joined` | Someone opened the console |
 | `{disconnected, Reason}` | The socket dropped; the transport reconnects |
 | `{transport_error, Reason}` | TLS or network failure |
 
@@ -88,7 +88,7 @@ connecting or every signature is decades stale. `start/1` refuses with
 | `firmware_keys` | none | Public keys; configuring any requires signatures |
 | `request_firmware_keys` | `false` | Also ask the server for the org's keys |
 | `updates` | `auto` | `manual` reports the offer and does nothing |
-| `reboot` | `auto` | `manual` reports `{reboot_requested}` instead |
+| `reboot` | `auto` | `manual` reports `reboot_requested` instead |
 | `console` | `false` | Join NervesHub's console channel |
 | `extensions` | none | `all`, or any of `health`, `geo`, `logging` |
 | `capture_io` | `false` | Send what the application prints |
@@ -154,9 +154,26 @@ to a running system.
 `extensions => all` attaches the three NervesHub extensions: `health` reports
 memory and uptime, `geo` reports a location, and `logging` carries log lines.
 
-`nh_logger` is a `logger` handler that sends everything logged. Log a charlist
-or a map, never a binary: AtomVM's logger raises `badarg` on a binary message,
-which takes down the process that logged it.
+`nh_logger` is a `logger` handler that sends everything logged, and
+`nerves_hub_link:send_log/3` sends one line directly.
+
+### Never log a binary
+
+AtomVM's `logger` accepts a list or a map and raises `badarg` on anything else,
+*before* any handler sees the event. A binary message does not produce a
+mangled log line; it takes down the process that logged it.
+
+```erlang
+logger:info("started"),           %% ok, a list
+logger:info(#{event => started}), %% ok, a map
+logger:info(<<"started">>).       %% badarg, and the caller dies
+```
+
+This bites Elixir hardest, because `Logger.info("...")` is muscle memory and
+Elixir strings are binaries. Elixir has no `Logger` on AtomVM, so Elixir code
+calls `:logger` directly and hits this on the first line it writes. Use a
+charlist (`~c"started"`) or a map, or call `nerves_hub_link:send_log/3`, which
+takes a binary and is the safe path.
 
 `capture_io => true` also sends what the application *prints*, which on AtomVM
 is most of how code reports anything. It makes a capture process the group
