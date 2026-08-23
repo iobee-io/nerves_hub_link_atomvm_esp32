@@ -5,24 +5,125 @@ A NervesHub device agent for AtomVM, targeting the ESP32.
 Two working devices are in [examples](examples), one written in Erlang and one
 in Elixir.
 
-## What a device needs
+## Building the VM
 
-AtomVM built from source. The
+A device does not run a stock AtomVM. The
 [WebSocket transport](https://github.com/nerves-hub/atomvm_websocket_client) is
 an ESP-IDF component, so a stock build cannot reach NervesHub at all, and
-building the VM is a prerequisite for everything below rather than for one
-feature.
+building the VM from source is a prerequisite for everything below rather than
+for one feature.
 
-Two further edits to that build, each buying one thing:
+Two edits beyond the transport, each buying one thing:
 
 | Edit | Needed for |
 | --- | --- |
-| Two packbeam partitions, `main.avm` and `alt.avm` | Over-the-air updates. See [the partition table](#the-partition-table) |
-| `AVM_USE_LIBSODIUM=ON`, and a larger main task stack | Verifying firmware signatures |
+| Two packbeam partitions, `main.avm` and `alt.avm` | Over-the-air updates |
+| `AVM_USE_LIBSODIUM=ON`, and a 16K main task stack | Verifying firmware signatures |
 
 Without the partitions a device still connects, reports what it is running,
 answers the console and carries the extensions. It just has nowhere to put an
-update that is not the partition it is executing from.
+update that is not the partition it is executing from. Without libsodium a
+device configured with `firmware_keys` reports `verification_unavailable`
+rather than accepting an update it cannot check. Leaving either out is a
+supported choice.
+
+The three files those edits need ship in `priv/atomvm`, so they arrive with the
+dependency rather than having to be copied out of a README.
+
+### From Elixir
+
+```
+. $IDF_PATH/export.sh
+mix nerves_hub.atomvm.vm ~/src/AtomVM ~/src/atomvm_websocket_client
+```
+
+That task is in
+[nerves_hub_link_atomvm_esp32_ex](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32_ex).
+`--dry-run` prints what it would copy and run without touching anything, and
+`--no-libsodium` skips Ed25519 and leaves the update slots in place.
+
+### From Erlang
+
+There is no equivalent command, and a rebar3 plugin would be a package of
+machinery for copying two files. After `rebar3 compile` the files are at
+`_build/default/lib/nerves_hub_link_atomvm_esp32/priv/atomvm`:
+
+```
+priv=_build/default/lib/nerves_hub_link_atomvm_esp32/priv/atomvm
+esp32=<AtomVM>/src/platforms/esp32
+
+cp $priv/partitions.csv     $esp32/partitions.csv
+cp $priv/idf_component.yml  $esp32/components/libatomvm/
+
+cd $esp32
+idf.py -DAVM_USE_LIBSODIUM=ON \
+       -DEXTRA_COMPONENT_DIRS=<transport> \
+       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;$priv/sdkconfig.defaults" \
+       set-target esp32
+idf.py build
+```
+
+`set-target` rather than `reconfigure`, because it clears the build directory
+and the generated `sdkconfig` first. CMake caches its component list, and a
+plain `idf.py build` after adding a component reports success without ever
+compiling it. That failure is silent, which is the one step worth not
+improvising.
+
+ESP-IDF v5.2 to v5.5 for either route. AtomVM does not build against v6:
+mbedTLS 4.x moved `mbedtls/ctr_drbg.h`, and GCC 15 rejects the gperf-generated
+tables.
+
+### Flashing what comes out
+
+```
+cd <AtomVM>/src/platforms/esp32
+idf.py -p /dev/ttyUSB0 flash
+idf.py -p /dev/ttyUSB0 flash-elixir    # or flash-erlang
+```
+
+Then the application, into `main.avm`. Read the offset off the device rather
+than from a checkout, because writing to one from a stale copy of the table
+lands the application inside `boot.avm`, and the only symptom is
+`Failed app start: invalid_avm`:
+
+```
+esptool.py --chip esp32 --port /dev/ttyUSB0 read_flash 0x8000 0xC00 ptable.bin
+gen_esp32part.py ptable.bin
+```
+
+### The table
+
+```
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x1D0000,
+boot.avm,   data, phy,     0x1E0000, 0x90000,
+main.avm,   data, phy,     0x270000, 0xC8000,
+alt.avm,    data, phy,     0x338000, 0xC8000,
+```
+
+`main.avm` and `alt.avm` must stay the same size as each other, since either
+has to hold the archive. The names are not symmetric on purpose: `esp32init`
+falls back to `/dev/partition/by-name/main.avm` when NVS holds no boot path, so
+a device with nothing provisioned still boots. Naming them `a` and `b` would
+mean writing NVS before a device would start at all.
+
+`boot.avm` is 576K rather than the stock 512K because an Elixir device needs
+`elixir_esp32boot.avm`, which is 530,784 bytes. `factory` is 1856K rather than
+1792K because libsodium adds around 140K and the stock size overflows by
+0x5130. An Erlang device without signature verification can have both back.
+
+`priv/atomvm/partitions.csv` carries the same table with those reasons beside
+each line.
+
+### Upstream
+
+Two of these are arguably AtomVM bugs rather than choices, and are worth fixing
+there. `AVM_USE_LIBSODIUM=ON` cannot link, because the repository ships no
+`idf_component.yml` declaring the dependency the option needs. And turning that
+option on overflows the default 3584-byte main task stack, with no note
+anywhere that it needs raising. Neither is filed yet.
 
 ## Usage
 
@@ -127,55 +228,15 @@ Writing to the inactive slot is what makes a failed update survivable: the
 running archive is never overwritten, so a refused or corrupt download leaves
 the device running what it had.
 
-### The partition table
+### Where the slots come from
 
-Updates need two packbeam partitions, named `main.avm` and `alt.avm`. **Stock
-AtomVM has one**, so a device built from the default table can report what it
-is running and take a console session, but it cannot be updated: there is
+Updates need two packbeam partitions, `main.avm` and `alt.avm`. Stock AtomVM
+has one, so a device built from the default table cannot be updated: there is
 nowhere to write that is not the partition it is executing from.
 
-The table is compiled into the AtomVM firmware, so this is a decision made when
-building the VM, not something an application can change later. Building AtomVM
-is already a prerequisite for the WebSocket transport, so it is one edit rather
-than a new step.
-
-```
-# Name,     Type, SubType, Offset,   Size,     Flags
-nvs,        data, nvs,     0x9000,   0x6000,
-phy_init,   data, phy,     0xf000,   0x1000,
-factory,    app,  factory, 0x10000,  0x1D0000,
-boot.avm,   data, phy,     0x1E0000, 0x90000,
-main.avm,   data, phy,     0x270000, 0xC8000,
-alt.avm,    data, phy,     0x338000, 0xC8000,
-```
-
-The names are not symmetric, and the asymmetry is deliberate. `esp32init` falls
-back to `/dev/partition/by-name/main.avm` when NVS holds no boot path, so a
-device boots from `main.avm` with nothing provisioned. Naming the pair `a` and
-`b` would mean every device needed an NVS write before it would boot at all.
-
-Three sizes above differ from stock, each for a reason:
-
-`main.avm` and `alt.avm` are whatever the application needs, and the two must
-be the same size, since either has to hold the archive.
-
-`boot.avm` is 576K rather than 512K because an Elixir device needs the Elixir
-boot image, and `elixir_esp32boot.avm` is 530,784 bytes. An Erlang-only device
-can leave it at 512K.
-
-`factory` is larger than stock if signatures are being verified. Ed25519 on
-AtomVM is behind `AVM_USE_LIBSODIUM`, which is off by default, and turning it
-on adds around 140K. libsodium also wants more stack than the default 3584
-bytes; `CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384` is enough.
-
-Read the table off a device rather than trusting a `partitions.csv` in a
-checkout, because writing an application to an offset from a stale copy lands
-it inside `boot.avm`, and the only symptom is `Failed app start: invalid_avm`:
-
-```
-esptool.py --chip esp32 --port /dev/ttyUSB0 read_flash 0x8000 0xC00 ptable.bin
-gen_esp32part.py ptable.bin
-```
+The table is compiled into the AtomVM firmware, so it is decided when the VM is
+built and an application cannot change it later. See
+[building the VM](#building-the-vm).
 
 ### Signing
 

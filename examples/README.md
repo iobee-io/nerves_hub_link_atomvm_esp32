@@ -74,15 +74,16 @@ After the first flash, updates go over the air. The device installs into
 whichever of `main.avm` and `alt.avm` it is not running from, so an update
 never writes over what is currently booted.
 
-## A layout with two slots
+## The VM underneath
 
-Neither example can use the stock AtomVM partition table: it has one packbeam
-partition, and an update needs somewhere to go that is not the partition it is
-running from. `partitions.csv` beside each example is a copy of the table these
-were built and flashed with, for reference. The one the device uses is built
-into the AtomVM firmware.
+Neither example runs on a stock AtomVM. The WebSocket transport is an ESP-IDF
+component, updates need a partition table with two packbeam slots rather than
+the one stock has, and verifying signatures needs `AVM_USE_LIBSODIUM=ON`.
 
-`libsodium` is the other reason the stock table does not fit. Ed25519
-verification on AtomVM is behind `AVM_USE_LIBSODIUM`, which is off by default,
-and turning it on adds around 140K to the firmware, enough to overflow the
-stock `factory` partition.
+The parts that differ ship in the agent's `priv/atomvm`, and
+[building the VM](../README.md#building-the-vm) has the steps for both
+languages.
+
+The `partitions.csv` beside each example is a copy of that table, kept for
+reference when checking a flash offset. The one that matters is compiled into
+the firmware, which is why the advice above is to read it off the device.

@@ -1,0 +1,5 @@
+## Pulled in only when AVM_USE_LIBSODIUM=ON, which is what provides Ed25519
+## for crypto:sign/4 and crypto:verify/5. Without it those raise rather than
+## returning false.
+dependencies:
+  espressif/libsodium: "*"

@@ -1,0 +1,32 @@
+# Copyright 2018-2021 Davide Bettio <davide@uninstall.it>
+# Copyright 2018-2021 Fred Dushin <fred@dushin.net>
+#
+# SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
+#
+# The layout a NervesHub device needs, on 4MB. Copy over
+# AtomVM/src/platforms/esp32/partitions.csv before building the VM.
+#
+#   * Two packbeam slots, so an update never writes over the running archive.
+#     `main.avm` keeps the name esp32init falls back to when NVS holds no boot
+#     path, so a device with nothing provisioned still boots. Stock AtomVM has
+#     one slot and cannot be updated over the air at all.
+#
+#   * `main.avm` and `alt.avm` must stay the same size as each other, since
+#     either has to hold the archive. 800K here; make both larger together if
+#     the application outgrows it.
+#
+#   * `boot.avm` is 576K rather than the stock 512K because an Elixir device
+#     needs elixir_esp32boot.avm, which is 530,784 bytes. An Erlang-only
+#     device can leave it at 512K and give the 64K back to the slots.
+#
+#   * `factory` is 1856K rather than 1792K because AVM_USE_LIBSODIUM=ON adds
+#     around 140K, and the stock size overflows by 0x5130. Without libsodium
+#     it can go back to 1792K.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x1D0000,
+boot.avm,   data, phy,     0x1E0000, 0x90000,
+main.avm,   data, phy,     0x270000, 0xC8000,
+alt.avm,    data, phy,     0x338000, 0xC8000,

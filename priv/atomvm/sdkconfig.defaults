@@ -1,0 +1,10 @@
+# Overlay for the AtomVM esp32 build, applied after AtomVM's own defaults.
+#
+# libsodium's Ed25519 verification needs more stack than the ESP-IDF default of
+# 3584 bytes. Without this the device does not report a bad signature, it
+# overflows the main task stack and resets, which looks like a crash on the
+# first update rather than a configuration problem.
+#
+# Only needed with AVM_USE_LIBSODIUM=ON. Harmless otherwise, at the cost of
+# some RAM.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
