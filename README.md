@@ -5,6 +5,25 @@ A NervesHub device agent for AtomVM, targeting the ESP32.
 Two working devices are in [examples](examples), one written in Erlang and one
 in Elixir.
 
+## What a device needs
+
+AtomVM built from source. The
+[WebSocket transport](https://github.com/nerves-hub/atomvm_websocket_client) is
+an ESP-IDF component, so a stock build cannot reach NervesHub at all, and
+building the VM is a prerequisite for everything below rather than for one
+feature.
+
+Two further edits to that build, each buying one thing:
+
+| Edit | Needed for |
+| --- | --- |
+| Two packbeam partitions, `main.avm` and `alt.avm` | Over-the-air updates. See [the partition table](#the-partition-table) |
+| `AVM_USE_LIBSODIUM=ON`, and a larger main task stack | Verifying firmware signatures |
+
+Without the partitions a device still connects, reports what it is running,
+answers the console and carries the extensions. It just has nowhere to put an
+update that is not the partition it is executing from.
+
 ## Usage
 
 ```erlang
@@ -107,6 +126,56 @@ knows whether the device is in the middle of something.
 Writing to the inactive slot is what makes a failed update survivable: the
 running archive is never overwritten, so a refused or corrupt download leaves
 the device running what it had.
+
+### The partition table
+
+Updates need two packbeam partitions, named `main.avm` and `alt.avm`. **Stock
+AtomVM has one**, so a device built from the default table can report what it
+is running and take a console session, but it cannot be updated: there is
+nowhere to write that is not the partition it is executing from.
+
+The table is compiled into the AtomVM firmware, so this is a decision made when
+building the VM, not something an application can change later. Building AtomVM
+is already a prerequisite for the WebSocket transport, so it is one edit rather
+than a new step.
+
+```
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x1D0000,
+boot.avm,   data, phy,     0x1E0000, 0x90000,
+main.avm,   data, phy,     0x270000, 0xC8000,
+alt.avm,    data, phy,     0x338000, 0xC8000,
+```
+
+The names are not symmetric, and the asymmetry is deliberate. `esp32init` falls
+back to `/dev/partition/by-name/main.avm` when NVS holds no boot path, so a
+device boots from `main.avm` with nothing provisioned. Naming the pair `a` and
+`b` would mean every device needed an NVS write before it would boot at all.
+
+Three sizes above differ from stock, each for a reason:
+
+`main.avm` and `alt.avm` are whatever the application needs, and the two must
+be the same size, since either has to hold the archive.
+
+`boot.avm` is 576K rather than 512K because an Elixir device needs the Elixir
+boot image, and `elixir_esp32boot.avm` is 530,784 bytes. An Erlang-only device
+can leave it at 512K.
+
+`factory` is larger than stock if signatures are being verified. Ed25519 on
+AtomVM is behind `AVM_USE_LIBSODIUM`, which is off by default, and turning it
+on adds around 140K. libsodium also wants more stack than the default 3584
+bytes; `CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384` is enough.
+
+Read the table off a device rather than trusting a `partitions.csv` in a
+checkout, because writing an application to an offset from a stale copy lands
+it inside `boot.avm`, and the only symptom is `Failed app start: invalid_avm`:
+
+```
+esptool.py --chip esp32 --port /dev/ttyUSB0 read_flash 0x8000 0xC00 ptable.bin
+gen_esp32part.py ptable.bin
+```
 
 ### Signing
 
