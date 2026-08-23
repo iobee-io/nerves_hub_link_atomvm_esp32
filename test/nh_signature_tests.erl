@@ -181,3 +181,67 @@ verify_parts_checks_a_located_range_test() ->
         {error, invalid_signature}, nh_signature:verify_parts(<<"other">>, Payload, [Pub])
     ),
     ?assertEqual({error, malformed_signature}, nh_signature:verify_parts(Range, <<"junk">>, [Pub])).
+
+%% ------------------------------------------------------------- private_key/1
+
+%% fwup writes a 64 byte secret key: a seed followed by its public key. Only
+%% the seed signs, and this is what `nh-avm` and `mix nerves_hub.sign` both
+%% read a key file with, so they cannot drift.
+an_fwup_private_key_yields_the_seed_test() ->
+    {Public, Seed} = crypto:generate_key(eddsa, ed25519),
+    Fwup = <<Seed/binary, Public/binary>>,
+
+    ?assertEqual({ok, Seed}, nh_signature:private_key(Fwup)),
+    ?assertEqual({ok, Seed}, nh_signature:private_key(base64:encode(Fwup))).
+
+a_bare_seed_is_accepted_test() ->
+    {_Public, Seed} = crypto:generate_key(eddsa, ed25519),
+
+    ?assertEqual({ok, Seed}, nh_signature:private_key(Seed)),
+    ?assertEqual({ok, Seed}, nh_signature:private_key(base64:encode(Seed))).
+
+%% A key file written by fwup or `nh-avm keygen` ends in a newline.
+trailing_whitespace_in_a_key_file_is_ignored_test() ->
+    {Public, Seed} = crypto:generate_key(eddsa, ed25519),
+    Encoded = base64:encode(<<Seed/binary, Public/binary>>),
+
+    ?assertEqual({ok, Seed}, nh_signature:private_key(<<Encoded/binary, "\n">>)).
+
+%% The key read here signs, so a key of the wrong length has to be refused
+%% rather than truncated into something that produces a signature nothing can
+%% verify.
+%% Base64 of 48 bytes is 64 characters, and reading raw lengths before trying
+%% base64 would take that text for a raw fwup key and hand back its first 32
+%% characters as the seed. That signs, and produces a signature nothing can
+%% verify, which is the worst shape a key bug can have.
+base64_text_is_not_mistaken_for_raw_key_bytes_test() ->
+    Encoded = base64:encode(binary:copy(<<0>>, 48)),
+    ?assertEqual(64, byte_size(Encoded)),
+
+    ?assertEqual({error, {not_a_private_key, 48}}, nh_signature:private_key(Encoded)).
+
+a_key_of_the_wrong_length_is_refused_test() ->
+    ?assertMatch({error, _}, nh_signature:private_key(<<1, 2, 3>>)),
+    ?assertMatch(
+        {error, {not_a_private_key, 48}},
+        nh_signature:private_key(base64:encode(binary:copy(<<0>>, 48)))
+    ).
+
+%% `public_key/1` refuses a private key on purpose, because what it parses is
+%% compiled into firmware. The two are not interchangeable and this records it.
+a_private_key_is_not_a_public_key_test() ->
+    {Public, Seed} = crypto:generate_key(eddsa, ed25519),
+    Fwup = base64:encode(<<Seed/binary, Public/binary>>),
+
+    ?assertMatch({error, _}, nh_signature:public_key(Fwup)),
+    ?assertMatch({ok, _}, nh_signature:private_key(Fwup)).
+
+%% The point of all of it: a key read this way signs an archive that verifies
+%% against the matching public key.
+a_key_read_this_way_signs_test() ->
+    {Public, Seed} = crypto:generate_key(eddsa, ed25519),
+    {ok, Parsed} = nh_signature:private_key(base64:encode(<<Seed/binary, Public/binary>>)),
+
+    {ok, Signed} = nh_signature:sign(archive(), Parsed),
+
+    ?assertMatch({ok, Public}, nh_signature:verify(Signed, [Public])).

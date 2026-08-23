@@ -28,9 +28,6 @@
 
 -export([main/1]).
 
--define(SEED_SIZE, 32).
--define(PUBLIC_SIZE, 32).
-
 main(["sign" | Args]) -> run(fun sign/1, Args, [key, in, out]);
 main(["verify" | Args]) -> run(fun verify/1, Args, [key, in]);
 main(["keygen" | Args]) -> run(fun keygen/1, Args, [priv, pub]);
@@ -104,31 +101,31 @@ keygen(#{priv := PrivPath, pub := PubPath}) ->
 
 %% ------------------------------------------------------------------- keys
 
-%% Accepts fwup's 64 byte secret key or a bare 32 byte seed.
+%% Parsing lives in `nh_signature' so that this and `mix nerves_hub.sign' read
+%% a key file the same way.
 read_private_key(Path) ->
-    case decode_key(Path) of
-        <<Seed:?SEED_SIZE/binary, _Public:?PUBLIC_SIZE/binary>> -> Seed;
-        <<Seed:?SEED_SIZE/binary>> -> Seed;
-        Other -> die("~s: not an Ed25519 private key (~p bytes)", [Path, byte_size(Other)])
+    case nh_signature:private_key(read_file(Path)) of
+        {ok, Seed} -> Seed;
+        {error, Reason} -> die("~s: ~p", [Path, Reason])
     end.
 
 read_public_key(Path) ->
-    case decode_key(Path) of
-        <<Public:?PUBLIC_SIZE/binary>> -> Public;
-        %% Handing over a private key by mistake should work rather than fail
-        %% confusingly: the public half is the second one.
-        <<_Seed:?SEED_SIZE/binary, Public:?PUBLIC_SIZE/binary>> -> Public;
-        Other -> die("~s: not an Ed25519 public key (~p bytes)", [Path, byte_size(Other)])
-    end.
-
-decode_key(Path) ->
     Contents = read_file(Path),
-    Trimmed = <<<<C>> || <<C>> <= Contents, C =/= $\n, C =/= $\r, C =/= $\s>>,
 
-    try base64:decode(Trimmed) of
-        Decoded -> Decoded
-    catch
-        _:_ -> die("~s: not base64", [Path])
+    case nh_signature:public_key(Contents) of
+        {ok, Public} ->
+            Public;
+        {error, _} ->
+            %% Handing over a private key by mistake should work rather than
+            %% fail confusingly. `public_key/1' refuses one, because what it
+            %% parses ends up in firmware, so derive the public half here.
+            case nh_signature:private_key(Contents) of
+                {ok, Seed} ->
+                    {Public, _Seed} = crypto:generate_key(eddsa, ed25519, Seed),
+                    Public;
+                {error, Reason} ->
+                    die("~s: ~p", [Path, Reason])
+            end
     end.
 
 base64(Bin) -> <<(base64:encode(Bin))/binary, "\n">>.

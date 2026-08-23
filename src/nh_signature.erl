@@ -52,7 +52,7 @@
 -module(nh_signature).
 
 -export([entry_name/0, version/0, sign/2, verify/2, verify_parts/3, signed_range/1, strip/1]).
--export([public_key/1, available/0]).
+-export([public_key/1, private_key/1, available/0]).
 
 -define(ENTRY_NAME, <<"nerves_hub/signature">>).
 -define(MAGIC, <<"NH1">>).
@@ -206,6 +206,55 @@ verifies(_Signed, _Signature, _Key) ->
 %% on every device in the fleet.
 %% @end
 %%-----------------------------------------------------------------------------
+%%-----------------------------------------------------------------------------
+%% @doc Read a signing key, as the seed `sign/2' wants.
+%%
+%% Takes fwup's 64 byte secret key or a bare 32 byte seed, base64 or raw. An
+%% fwup private key is a seed followed by its public key, which is libsodium's
+%% layout, and only the seed is used to sign.
+%%
+%% The counterpart of `public_key/1', and deliberately not the same function.
+%% That one refuses a 64 byte key, because what it parses ends up compiled into
+%% firmware and quietly accepting a private key there would put a signing key
+%% on every device in the fleet. This one is for a build machine, where a
+%% private key is the point.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec private_key(binary() | string()) -> {ok, binary()} | {error, term()}.
+private_key(Key) when is_list(Key) ->
+    private_key(list_to_binary(Key));
+private_key(Key) when is_binary(Key) ->
+    %% Base64 first and without falling back on a length mismatch. Checking raw
+    %% lengths first looks harmless and is not: base64 of 48 bytes is 64
+    %% characters, which would be read as a raw 64 byte key and yield the first
+    %% 32 characters of the text as the seed. That signs, and produces a
+    %% signature nothing can verify. Raw key bytes are almost never valid
+    %% base64, so this way round the ambiguity does not arise.
+    seed(
+        case base64_decoded(Key) of
+            {ok, Decoded} -> Decoded;
+            {error, not_base64} -> Key
+        end
+    );
+private_key(Key) ->
+    {error, {not_a_key, Key}}.
+
+%% fwup writes a seed followed by its public key; only the seed signs.
+seed(<<Seed:?KEY_SIZE/binary, _Public:?KEY_SIZE/binary>>) -> {ok, Seed};
+seed(<<Seed:?KEY_SIZE/binary>>) -> {ok, Seed};
+seed(Other) -> {error, {not_a_private_key, byte_size(Other)}}.
+
+%% A key file written by fwup or by `nh-avm keygen' is base64 with a trailing
+%% newline.
+base64_decoded(Key) ->
+    Trimmed = <<<<C>> || <<C>> <= Key, C =/= $\n, C =/= $\r, C =/= $\s>>,
+
+    try base64:decode(Trimmed) of
+        Decoded -> {ok, Decoded}
+    catch
+        _:_ -> {error, not_base64}
+    end.
+
 -spec public_key(binary() | string()) -> {ok, binary()} | {error, term()}.
 public_key(Key) when is_list(Key) ->
     public_key(list_to_binary(Key));
