@@ -5,6 +5,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-24
+
+### Fixed
+
+- Maintainer tooling moved from `plugins` to `project_plugins`. `plugins` is
+  inherited, so anything depending on this library built seven packages it had
+  no use for, erlfmt and rebar3_hex among them, before compiling a line of its
+  own code.
+
 ## [0.1.1] - 2026-08-24
 
 ### Fixed
@@ -46,6 +55,7 @@ hardware against a running NervesHub rather than only against tests.
 - `priv/atomvm`, the partition table and build settings a device needs, so the
   VM is reproducible rather than described.
 
-[Unreleased]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/releases/tag/v0.1.0

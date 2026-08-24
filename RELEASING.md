@@ -12,6 +12,10 @@ in CI catches a README still describing the previous version's dependency.
 - [ ] `README.md`: the version in the **Installing** snippet, if the major or
       minor moved. This is the one that gets missed.
 - [ ] `rebar3 eunit`, `rebar3 dialyzer`, `rebar3 xref`, `rebar3 fmt --check`.
+- [ ] Build a throwaway project that depends only on this package and check the
+      install snippet against it. Nothing else catches a snippet that lists a
+      dependency rebar3 would have resolved anyway, or plugins leaking into a
+      consumer's build.
 - [ ] `rebar3 hex build`, then unpack the tarball and look at what is in it.
       `files` in the app.src is an allow list, so a new top-level directory is
       absent until someone adds it.
@@ -28,8 +32,8 @@ prints before confirming.
 ## After
 
 ```
-git tag -a v0.1.1 -m "v0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "v0.1.2"
+git push origin v0.1.2
 ```
 
 Then, if the minor moved, the Elixir package's dependency on this one needs
