@@ -46,6 +46,29 @@ jobs:
 
       - run: rebar3 eunit
 
+  static:
+    name: Static analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          rebar3-version: "3.25.0"
+
+      # The PLT is the expensive part and only changes with OTP, so it is keyed
+      # on that rather than on the source.
+      - uses: actions/cache@v4
+        with:
+          path: _build/default/rebar3_*_plt
+          key: ${{ runner.os }}-otp28-plt
+
+      - run: rebar3 xref
+
+      - run: rebar3 dialyzer
+
   format:
     name: Format
     runs-on: ubuntu-latest

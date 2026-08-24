@@ -101,6 +101,25 @@ mean writing NVS before a device would start at all.
 `priv/atomvm/partitions.csv` carries the same table with those reasons beside
 each line.
 
+## Installing
+
+```erlang
+{deps, [
+    {nerves_hub_link_atomvm_esp32,
+        {git, "https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32.git",
+            {branch, "main"}}},
+    {atomvm_websocket_client,
+        {git, "https://github.com/nerves-hub/atomvm_websocket_client.git",
+            {branch, "main"}}}
+]}.
+```
+
+The transport is a separate dependency and is not optional: it is what the
+agent talks to NervesHub over. It is also an ESP-IDF component, so it has to be
+compiled into the VM as well as listed here. See [building the VM](#building-the-vm).
+
+Not on Hex yet, which is why these are git dependencies.
+
 ## Usage
 
 ```erlang

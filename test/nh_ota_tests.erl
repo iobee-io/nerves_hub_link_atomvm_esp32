@@ -64,3 +64,15 @@ digest_matches_rejects_a_different_archive_test() ->
 digest_matches_refuses_a_missing_checksum_test() ->
     ?assertNot(nh_ota:digest_matches(<<"aaaa">>, undefined)),
     ?assertNot(nh_ota:digest_matches(<<"aaaa">>, not_a_binary)).
+
+%% ------------------------------------------------------------------ commit/0
+
+%% `commit/0` used to be unable to fail: `nvs_erase` ended in `catch _:_ -> ok`,
+%% so a device could report a commit that never happened and leave the pending
+%% marker on flash while believing the firmware was validated. The agent has
+%% always handled `{error, _}` here -- the branch was simply unreachable.
+%%
+%% There is no `esp` module on the host, so `apply` raises `undef` and this
+%% exercises exactly the path that used to be swallowed.
+a_commit_that_cannot_write_nvs_is_reported_test() ->
+    ?assertMatch({error, {nvs_erase_failed, _Key, _Reason}}, nh_ota:commit()).

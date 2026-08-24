@@ -28,6 +28,10 @@
 
 -export([main/1]).
 
+%% Every path ends in `halt/1', which is what `no_return()' says. Without it
+%% dialyzer reports four "has no local return" warnings for code that is doing
+%% exactly what a command line tool should.
+-spec main([string()]) -> no_return().
 main(["sign" | Args]) -> run(fun sign/1, Args, [key, in, out]);
 main(["verify" | Args]) -> run(fun verify/1, Args, [key, in]);
 main(["keygen" | Args]) -> run(fun keygen/1, Args, [priv, pub]);
@@ -44,6 +48,7 @@ usage() ->
     ),
     halt(1).
 
+-spec run(fun((map()) -> no_return()), [string()], [atom()]) -> no_return().
 run(Fun, Args, Required) ->
     case parse(Args, #{}) of
         {ok, Options} ->
@@ -62,6 +67,7 @@ parse([[$-, $- | Name], Value | Rest], Options) ->
 parse(_Other, _Options) ->
     error.
 
+-spec sign(map()) -> no_return().
 sign(#{key := KeyPath, in := In, out := Out}) ->
     Seed = read_private_key(KeyPath),
     Archive = read_file(In),
@@ -77,6 +83,7 @@ sign(#{key := KeyPath, in := In, out := Out}) ->
             die("could not sign: ~p", [Reason])
     end.
 
+-spec verify(map()) -> no_return().
 verify(#{key := KeyPath, in := In}) ->
     Public = read_public_key(KeyPath),
 
@@ -88,6 +95,7 @@ verify(#{key := KeyPath, in := In}) ->
             die("~s: ~p", [In, Reason])
     end.
 
+-spec keygen(map()) -> no_return().
 keygen(#{priv := PrivPath, pub := PubPath}) ->
     {Public, Seed} = crypto:generate_key(eddsa, ed25519),
 

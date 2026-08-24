@@ -51,11 +51,23 @@
 -define(DEVICE_TOPIC, <<"device">>).
 -define(PHOENIX_TOPIC, <<"phoenix">>).
 
--opaque state() :: #{
+%% Per topic: the join payload this channel reports, the reference its join was
+%% sent with, and whether the server has acknowledged it.
+-type topic_state() :: #{
     params := map(),
-    ref := pos_integer(),
     join_ref := binary() | undefined,
     joined := boolean()
+}.
+
+%% One socket carrying several channels, in the order they were added, so the
+%% device topic is joined first.
+%%
+%% `ref' is shared across all of them rather than per topic: Phoenix correlates
+%% a reply by reference, and two channels numbering from 1 apiece would produce
+%% two different frames carrying the same one.
+-opaque state() :: #{
+    ref := pos_integer(),
+    topics := [{binary(), topic_state()}]
 }.
 
 -type action() :: {send, binary()} | {event, term()}.

@@ -252,9 +252,7 @@ finish({ok, State}, Slot, Checksum) ->
         false -> {error, {checksum_mismatch, Digest, Checksum}}
     end;
 finish({error, _} = Error, _Slot, _Checksum) ->
-    Error;
-finish(Other, _Slot, _Checksum) ->
-    {error, {download_failed, Other}}.
+    Error.
 
 %% Read it back before arming it. The digest proves what arrived over the wire;
 %% this proves what actually landed in flash.
@@ -521,11 +519,15 @@ nvs_get(Key) ->
         _:_ -> undefined
     end.
 
+%% `esp:nvs_erase_key/2' returns `ok' and does nothing when the key is not
+%% there, so "already gone" needs no special case here. Anything else is a
+%% failure worth reporting: swallowing it would let `commit/0' report a commit
+%% that did not happen, leaving the pending marker on flash while the device
+%% believes the firmware is validated.
 nvs_erase(Key) ->
     try apply(esp, nvs_erase_key, [?NVS_NAMESPACE, Key]) of
         ok -> ok;
-        %% Already gone is the state we wanted.
-        _Other -> ok
+        Other -> {error, {nvs_erase_failed, Key, Other}}
     catch
-        _:_ -> ok
+        _:Reason -> {error, {nvs_erase_failed, Key, Reason}}
     end.

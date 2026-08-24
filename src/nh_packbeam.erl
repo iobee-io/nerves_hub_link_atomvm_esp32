@@ -58,15 +58,33 @@
 %% names are relative paths, so this bounds how long one may be.
 -define(WINDOW_SIZE, 512).
 
+%% What `entry_header/1' can tell from a window at the start of an entry: how
+%% long it is, what it is called, and where its data begins relative to the
+%% entry. Not the data itself, which the window may not reach.
+-type header() :: #{
+    size := pos_integer(),
+    flags := non_neg_integer(),
+    name := binary(),
+    data_offset := pos_integer()
+}.
+
+%% What `scan/1' returns, which is a header plus the two things only a walk of
+%% the whole archive knows: the entry's data, and where the entry starts.
+%%
+%% These were one type, and the single type omitted `data'. Everything reading
+%% `#{data := _}' then looked unreachable to dialyzer, which reported it as
+%% seven "can never match" warnings across this module, `nh_signature' and
+%% `nh_metadata' -- none of them real, all of them hiding whatever is.
 -type entry() :: #{
     size := pos_integer(),
     flags := non_neg_integer(),
     name := binary(),
     data_offset := pos_integer(),
-    offset => non_neg_integer()
+    data := binary(),
+    offset := non_neg_integer()
 }.
 
--export_type([entry/0]).
+-export_type([header/0, entry/0]).
 
 %%-----------------------------------------------------------------------------
 %% @doc The 24 bytes every packbeam starts with.
@@ -105,7 +123,7 @@ window_size() -> ?WINDOW_SIZE.
 %% entry.
 %% @end
 %%-----------------------------------------------------------------------------
--spec entry_header(binary()) -> {ok, entry()} | terminator | {error, term()}.
+-spec entry_header(binary()) -> {ok, header()} | terminator | {error, term()}.
 entry_header(<<0:32, _/binary>>) ->
     terminator;
 entry_header(<<_Size:32, 0:32, _/binary>>) ->

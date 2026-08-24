@@ -5,6 +5,8 @@
     {applications, [kernel, stdlib]},
     {env, []},
     {modules, []},
-    {licenses, ["Apache 2.0"]},
-    {links, []}
+    %% SPDX identifiers, and both of them: every source file says
+    %% `Apache-2.0 OR LGPL-2.1-or-later' and so does LICENSE.
+    {licenses, ["Apache-2.0", "LGPL-2.1-or-later"]},
+    {links, [{"GitHub", "https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32"}]}
 ]}.
