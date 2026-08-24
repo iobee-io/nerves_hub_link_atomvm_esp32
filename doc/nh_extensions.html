@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_extensions</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_extensions</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>The extensions channel: health, geo and logs.
+
+
+<h2><a name="description">Description</a></h2><p>The extensions channel: health, geo and logs.</p>
+ 
+  <p>Extensions are optional capabilities a device offers and the platform turns
+  on. The device joins the <code>extensions</code> topic with what it can do and the  
+versions it speaks, and the join reply names the subset the platform wants  
+attached — a device may support an extension the product has switched off.</p>
+ 
+  <pre>  join payload   #{&lt;&lt;"health"&gt;&gt; =&gt; &lt;&lt;"0.0.1"&gt;&gt;, ...}   device -&gt; server
+  join reply     [&lt;&lt;"health"&gt;&gt;, &lt;&lt;"geo"&gt;&gt;]             server -&gt; device</pre>
+ 
+  <h3><a name="Scoped_events">Scoped events</a></h3>
+ 
+  <p>Every event on this topic is prefixed with the extension it belongs to, so
+  <code>health:check</code> is <code>check</code> for <code>health</code>. Splitting on the first colon is the
+  whole of the routing — the rest of the event name may contain colons of its
+  own, as <code>geo:location:request</code> does.</p>
+ 
+  <h3><a name="What_this_module_does_not_do">What this module does not do</a></h3>
+ 
+  It has no side effects. Building a health report reads the system, resolving
+  a location makes an HTTP request, and neither belongs in a routing table, so
+  both come back as actions for the caller to carry out. See <code>nh_agent</code>.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-state">state()</a></h3>
+<p><code>state() = #{enabled := [binary()], attached := [binary()]}</code></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#attach-2">attach/2</a></td><td>Record the attach list from the join reply, and confirm it.</td></tr>
+<tr><td valign="top"><a href="#attached-1">attached/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#available-1">available/1</a></td><td>The join payload: what this device offers, and at which version.</td></tr>
+<tr><td valign="top"><a href="#enabled-1">enabled/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_event-3">handle_event/3</a></td><td>Route an event to its extension.</td></tr>
+<tr><td valign="top"><a href="#is_attached-2">is_attached/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-1">new/1</a></td><td>Build the registry from configuration.</td></tr>
+<tr><td valign="top"><a href="#scope-1">scope/1</a></td><td>Split a scoped event into its extension and the event within it.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="attach-2">attach/2</a></h3>
+<div class="spec">
+<p><code>attach(Response::term(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [term()]}</code><br></p>
+<p> </p>
+</div><p><p>Record the attach list from the join reply, and confirm it.</p>
+ 
+  <p>Anything the platform did not name stays detached, and anything named that  
+this device does not actually offer is ignored rather than trusted.</p>
+ 
+  The confirmations are the point. NervesHub does not start an extension when
+  it puts it in the attach list — it waits for the device to answer
+  <code>&amp;lt;key&amp;gt;:attached</code>, and only then runs the extension's own attach, which
+  is what asks for the first health report and the first location. A device
+  that attaches silently is a device the platform never speaks to again, and
+  nothing about that looks like an error from either end.</p>
+
+<h3 class="function"><a name="attached-1">attached/1</a></h3>
+<div class="spec">
+<p><code>attached(X1::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; [binary()]</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="available-1">available/1</a></h3>
+<div class="spec">
+<p><code>available(X1::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; map()</code><br></p>
+<p> </p>
+</div><p>The join payload: what this device offers, and at which version.</p>
+
+<h3 class="function"><a name="enabled-1">enabled/1</a></h3>
+<div class="spec">
+<p><code>enabled(X1::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; [binary()]</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="handle_event-3">handle_event/3</a></h3>
+<div class="spec">
+<p><code>handle_event(Scoped::binary(), Payload::map(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [term()]}</code><br></p>
+<p> </p>
+</div><p><p>Route an event to its extension.</p>
+ 
+  Returns actions rather than performing them: <code>{push, ScopedEvent, Payload}</code>
+  to answer immediately, <code>{resolve_location}</code> for the one that needs the
+  network. An event for an extension that is not attached is dropped — the
+  platform asking for something it never turned on is not something to answer.</p>
+
+<h3 class="function"><a name="is_attached-2">is_attached/2</a></h3>
+<div class="spec">
+<p><code>is_attached(Name::binary(), X2::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; boolean()</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="new-1">new/1</a></h3>
+<div class="spec">
+<p><code>new(Config::map()) -&gt; <a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a></code><br></p>
+<p> </p>
+</div><p><p>Build the registry from configuration.</p>
+ 
+  <code>extensions =&gt; [health, geo, logging]</code>, or <code>all</code>. Nothing is enabled by
+  default: each one costs traffic a device may not want to spend.</p>
+
+<h3 class="function"><a name="scope-1">scope/1</a></h3>
+<div class="spec">
+<p><code>scope(Scoped::binary()) -&gt; {binary(), binary()} | error</code><br></p>
+<p> </p>
+</div><p>Split a scoped event into its extension and the event within it.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

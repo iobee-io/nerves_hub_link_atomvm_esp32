@@ -1,0 +1,104 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_metadata</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_metadata</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>What the device reports about the firmware it is running.
+
+
+<h2><a name="description">Description</a></h2><p>What the device reports about the firmware it is running.</p>
+ 
+  <p>A Nerves device reports <code>nerves_fw_*</code> keys it was built with. An AtomVM  
+device has no such build-time values, and does not need them: the packbeam it  
+booted carries its own application metadata, and the VM underneath reports  
+its version. So the device reports what is actually running rather than what  
+it was compiled to believe.</p>
+ 
+  <pre>  atomvm_app_name      &lt;- the packbeam's application name
+  atomvm_app_version   &lt;- its vsn
+  atomvm_avm_sha256    &lt;- SHA-256 of the packbeam
+  atomvm_version       &lt;- erlang:system_info(atomvm_version)</pre>
+ 
+  <h3><a name="Two_versions,_not_one">Two versions, not one</a></h3>
+ 
+  <p><code>atomvm_app_version</code> is the firmware NervesHub manages. <code>atomvm_version</code> is  
+the VM the firmware runs on, which no packbeam can know and which is replaced  
+on a different schedule by a different mechanism. NervesHub records the  
+second alongside the first rather than confusing them.</p>
+ 
+  <h3><a name="No_UUID">No UUID</a></h3>
+ 
+  <p>NervesHub derives a firmware's UUID from the SHA-256 of the archive when it  
+is uploaded, so a device reporting the digest reports something the server  
+can match exactly. Deriving the UUID is the server's rule, kept in one place  
+so an agent cannot get it subtly wrong.</p>
+ 
+  The digest has to cover the archive and nothing else — see
+  <code>nh_packbeam:byte_length/1</code>, since a partition is bigger than what was
+  written into it.
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#atomvm_version-0">atomvm_version/0</a></td><td>The version of the VM this is running on.</td></tr>
+<tr><td valign="top"><a href="#describe-2">describe/2</a></td><td>Build the metadata from an application spec and a digest.</td></tr>
+<tr><td valign="top"><a href="#from_packbeam-1">from_packbeam/1</a></td><td>Describe a packbeam held in memory.</td></tr>
+<tr><td valign="top"><a href="#hex-1">hex/1</a></td><td>Lower case hex, the encoding NervesHub reads a digest in.</td></tr>
+<tr><td valign="top"><a href="#join_params-1">join_params/1</a></td><td>The join payload NervesHub expects from an AtomVM device.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="atomvm_version-0">atomvm_version/0</a></h3>
+<div class="spec">
+<p><code>atomvm_version() -&gt; binary() | undefined</code><br></p>
+<p> </p>
+</div><p><p>The version of the VM this is running on.</p>
+ 
+  <code>undefined</code> anywhere that is not AtomVM, which is what makes the rest of the
+  library testable off-device.</p>
+
+<h3 class="function"><a name="describe-2">describe/2</a></h3>
+<div class="spec">
+<p><code>describe(Application::map(), Sha256::binary()) -&gt; map()</code><br></p>
+<p> </p>
+</div><p><p>Build the metadata from an application spec and a digest.</p>
+ 
+  Separate from <code>from_packbeam/1</code> so that a device which hashed the archive as
+  it read it does not have to hold the archive to describe it.</p>
+
+<h3 class="function"><a name="from_packbeam-1">from_packbeam/1</a></h3>
+<div class="spec">
+<p><code>from_packbeam(Archive::binary()) -&gt; {ok, map()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Describe a packbeam held in memory.</p>
+ 
+  Hashes only the archive, so passing a whole partition is fine. For a device
+  that would rather not hold the archive at all, <code>nh_flash</code> walks and hashes it
+  in chunks and calls <code>describe/2</code>.</p>
+
+<h3 class="function"><a name="hex-1">hex/1</a></h3>
+<div class="spec">
+<p><code>hex(Bin::binary()) -&gt; binary()</code><br></p>
+<p> </p>
+</div><p>Lower case hex, the encoding NervesHub reads a digest in.</p>
+
+<h3 class="function"><a name="join_params-1">join_params/1</a></h3>
+<div class="spec">
+<p><code>join_params(Metadata::map()) -&gt; map()</code><br></p>
+<p> </p>
+</div><p><p>The join payload NervesHub expects from an AtomVM device.</p>
+ 
+  Keys the device could not determine are left out rather than sent empty. A
+  missing key and a key holding nothing mean the same thing to NervesHub, and
+  leaving it out keeps the agent from asserting something it does not know.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

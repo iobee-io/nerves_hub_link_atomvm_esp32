@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_packbeam</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_packbeam</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Reading an AtomVM packbeam archive.
+
+
+<h2><a name="description">Description</a></h2><p>Reading an AtomVM packbeam archive.</p>
+ 
+  <p>A packbeam is what AtomVM runs: a flat archive of compiled BEAM modules and  
+data files, mounted by the VM rather than unpacked. It is the firmware  
+NervesHub manages for an AtomVM device — not the ESP-IDF image underneath,  
+which is AtomVM itself and is updated on its own schedule.</p>
+ 
+  <pre>  0x00  "#!/usr/bin/env AtomVM\n\0\0"      24 bytes, doubles as a shebang
+  0x18  entry, entry, ...                  until the terminator
+        size:32  flags:32  reserved:32  name\0 (padded to 4)  data
+        0:32     0:32      0:32         "end\0"</pre>
+ 
+  <p><code>size</code> covers the whole entry, header included, so walking is
+  <code>Offset + Size</code>.</p>
+ 
+  <h3><a name="Byte_length">Byte length</a></h3>
+ 
+  <p>NervesHub derives a firmware's UUID from the SHA-256 of the archive as  
+uploaded, so a device reporting a digest has to hash exactly the same bytes.  
+A partition is larger than the archive written into it, which makes the  
+archive's own length the thing that has to be recovered rather than assumed.</p>
+ 
+  <p>It is recoverable exactly. <code>packbeam_api:write_packbeam/2</code> ends every archive
+  with <code>create_header(0, 0, &amp;lt;&amp;lt;"end"&amp;gt;&amp;gt;)</code> — a 12 byte zeroed header
+  followed by a 4 byte <code>"end\0"</code> — so the archive ends 16 bytes after the
+  terminator starts. See <code>byte_length/1</code>.</p>
+ 
+  <h3><a name="Terms">Terms</a></h3>
+ 
+  Application metadata is decoded with <code>binary_to_term/1</code>. That is safe here
+  and is not on the server: this reads the device's own firmware, whose atoms
+  are by definition already loaded, while NervesHub reads uploads from anyone
+  and cannot afford to intern atoms out of them.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-entry">entry()</a></h3>
+<p><code>entry() = #{size := pos_integer(), flags := non_neg_integer(), name := binary(), data_offset := pos_integer(), data := binary(), offset := non_neg_integer()}</code></p>
+
+
+<h3 class="typedecl"><a name="type-header">header()</a></h3>
+<p><code>header() = #{size := pos_integer(), flags := non_neg_integer(), name := binary(), data_offset := pos_integer()}</code></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#application-1">application/1</a></td><td>The application this archive is, from a whole archive in memory.</td></tr>
+<tr><td valign="top"><a href="#application_from_data-1">application_from_data/1</a></td><td>Decode the contents of an <code>application.bin</code> entry.</td></tr>
+<tr><td valign="top"><a href="#byte_length-1">byte_length/1</a></td><td>The length of the archive itself, ignoring whatever follows it.</td></tr>
+<tr><td valign="top"><a href="#entry_header-1">entry_header/1</a></td><td>Parse one entry header.</td></tr>
+<tr><td valign="top"><a href="#header_size-0">header_size/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#is_application_entry-1">is_application_entry/1</a></td><td>Whether an entry name is an application spec.</td></tr>
+<tr><td valign="top"><a href="#magic-0">magic/0</a></td><td>The 24 bytes every packbeam starts with.</td></tr>
+<tr><td valign="top"><a href="#magic_size-0">magic_size/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#scan-1">scan/1</a></td><td>Walk a whole archive, returning every entry in file order.</td></tr>
+<tr><td valign="top"><a href="#terminator_size-0">terminator_size/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#window_size-0">window_size/0</a></td><td>How many bytes <code>entry_header/1</code> needs to see.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="application-1">application/1</a></h3>
+<div class="spec">
+<p><code>application(Archive::binary()) -&gt; {ok, map()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>The application this archive is, from a whole archive in memory.</p>
+ 
+  The first application spec wins. An archive built from a project with
+  dependencies holds one per application and nothing marks the root, but
+  <code>atomvm_rebar3_plugin</code> writes the project's own ahead of the dependency
+  archives it appends, so first is the project's.</p>
+
+<h3 class="function"><a name="application_from_data-1">application_from_data/1</a></h3>
+<div class="spec">
+<p><code>application_from_data(X1::binary()) -&gt; {ok, map()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Decode the contents of an <code>application.bin</code> entry.</p>
+ 
+  A 4 byte length, then <code>{application, Name, Props}</code> in the external term
+  format.</p>
+
+<h3 class="function"><a name="byte_length-1">byte_length/1</a></h3>
+<div class="spec">
+<p><code>byte_length(Bin::binary()) -&gt; {ok, pos_integer()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>The length of the archive itself, ignoring whatever follows it.</p>
+ 
+  This is the byte range NervesHub hashed when the archive was uploaded, so it
+  is the range a device has to hash to report a matching digest. See the note
+  above about how it is recovered.</p>
+
+<h3 class="function"><a name="entry_header-1">entry_header/1</a></h3>
+<div class="spec">
+<p><code>entry_header(Bin::binary()) -&gt; {ok, <a href="#type-header" docgen-rel="seetype" docgen-href="#header/0">header()</a>} | terminator | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Parse one entry header.</p>
+ 
+  <p><code>Bin</code> starts at the entry and must run to the end of the name — pass
+  <code>window_size()</code> bytes, or the rest of the archive if less remains.</p>
+ 
+  Returns <code>terminator</code> at the end of the archive. A zero size or a zero flags
+  word both end it: the terminator has both, and neither can occur on a real
+  entry.</p>
+
+<h3 class="function"><a name="header_size-0">header_size/0</a></h3>
+<div class="spec">
+<p><code>header_size() -&gt; pos_integer()</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="is_application_entry-1">is_application_entry/1</a></h3>
+<div class="spec">
+<p><code>is_application_entry(Name::binary()) -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p><p>Whether an entry name is an application spec.</p>
+ 
+  Matches <code>atomvm_packbeam:is_application_file/1</code>: the name splits into exactly
+  three components, rather than any path that happens to end the same way.</p>
+
+<h3 class="function"><a name="magic-0">magic/0</a></h3>
+<div class="spec">
+<p><code>magic() -&gt; binary()</code><br></p>
+<p> </p>
+</div><p>The 24 bytes every packbeam starts with.</p>
+
+<h3 class="function"><a name="magic_size-0">magic_size/0</a></h3>
+<div class="spec">
+<p><code>magic_size() -&gt; pos_integer()</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="scan-1">scan/1</a></h3>
+<div class="spec">
+<p><code>scan(Bin::binary()) -&gt; {ok, [<a href="#type-entry" docgen-rel="seetype" docgen-href="#entry/0">entry()</a>]} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Walk a whole archive, returning every entry in file order.</p>
+ 
+  Each entry carries its data. For a partition, where holding the archive in
+  memory is the thing to avoid, walk with <code>entry_header/1</code> instead and read
+  only the entry that is wanted.</p>
+
+<h3 class="function"><a name="terminator_size-0">terminator_size/0</a></h3>
+<div class="spec">
+<p><code>terminator_size() -&gt; pos_integer()</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="window_size-0">window_size/0</a></h3>
+<div class="spec">
+<p><code>window_size() -&gt; pos_integer()</code><br></p>
+<p> </p>
+</div><p><p>How many bytes <code>entry_header/1</code> needs to see.</p>
+ 
+  Only relevant when walking a partition a chunk at a time, where the caller
+  chooses how much to read.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

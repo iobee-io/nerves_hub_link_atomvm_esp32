@@ -76,3 +76,162 @@ digest_matches_refuses_a_missing_checksum_test() ->
 %% exercises exactly the path that used to be swallowed.
 a_commit_that_cannot_write_nvs_is_reported_test() ->
     ?assertMatch({error, {nvs_erase_failed, _Key, _Reason}}, nh_ota:commit()).
+
+%% ============================================================================
+%% The install path, off a device
+%%
+%% `nh_ota' reaches flash, NVS and the network through module names, so these
+%% drive the whole of `apply_update/2' against fakes. Until the seam existed
+%% none of this could run anywhere but a board, which is why the module that
+%% writes firmware was the least tested one in the library.
+%% ============================================================================
+
+-define(SLOT, <<"alt.avm">>).
+
+%% A body big enough to cross the 4096 byte block boundary several times and
+%% end on a partial block, which is where a streaming writer goes wrong.
+body() -> <<<<(X rem 256)>> || X <- lists:seq(1, 10000)>>.
+
+digest(Bin) -> nh_metadata:hex(crypto:hash(sha256, Bin)).
+
+opts(Extra) ->
+    maps:merge(
+        #{
+            esp => nh_ota_fake_esp,
+            http => nh_ota_fake_http,
+            flash => nh_ota_fake_flash,
+            slot => ?SLOT
+        },
+        Extra
+    ).
+
+payload(Body) ->
+    #{
+        <<"firmware_url">> => <<"https://example.com/firmware.avm">>,
+        <<"size">> => byte_size(Body),
+        <<"checksum">> => digest(Body)
+    }.
+
+setup() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:serve(body()),
+    ok = nh_ota_fake_flash:expect(#{avm_sha256 => digest(body())}).
+
+cleanup(_) ->
+    nh_ota_fake_esp:stop(),
+    nh_ota_fake_http:stop(),
+    nh_ota_fake_flash:stop().
+
+install_test_() ->
+    {setup, fun setup/0, fun cleanup/1, [
+        {"the bytes written are the bytes downloaded", fun bytes_written_match/0},
+        {"the slot is erased before anything is written", fun erases_first/0},
+        {"the boot path moves last", fun boot_path_moves_last/0}
+    ]}.
+
+bytes_written_match() ->
+    {ok, ?SLOT} = nh_ota:apply_update(payload(body()), opts(#{})),
+
+    %% Padded to a multiple of four; the archive's own length bounds it on read.
+    Written = nh_ota_fake_esp:written(),
+    ?assertEqual(body(), binary:part(Written, 0, byte_size(body()))).
+
+erases_first() ->
+    %% 10000 bytes rounds up to three 4096 byte sectors.
+    ?assertEqual([{?SLOT, 0, 12288}], nh_ota_fake_esp:erased()).
+
+boot_path_moves_last() ->
+    Nvs = nh_ota_fake_esp:nvs(),
+
+    ?assertEqual(?SLOT, maps:get({nerves_hub, pending_slot}, Nvs)),
+    ?assertEqual(<<"/dev/partition/by-name/alt.avm">>, maps:get({atomvm, boot_path}, Nvs)).
+
+%% The half that matters. A download that does not match what NervesHub said it
+%% would be must not reach the boot path.
+a_checksum_mismatch_is_refused_test() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:serve(body()),
+    ok = nh_ota_fake_flash:expect(#{avm_sha256 => digest(body())}),
+
+    Payload = (payload(body()))#{<<"checksum">> => digest(<<"something else">>)},
+    Result = nh_ota:apply_update(Payload, opts(#{})),
+
+    cleanup(ok),
+    ?assertMatch({error, {checksum_mismatch, _, _}}, Result).
+
+%% What landed in flash is read back and compared, so a write that silently
+%% dropped bytes is caught before the device is pointed at it.
+a_written_archive_that_reads_back_wrong_is_refused_test() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:serve(body()),
+    ok = nh_ota_fake_flash:expect(#{avm_sha256 => digest(<<"not what was written">>)}),
+
+    Result = nh_ota:apply_update(payload(body()), opts(#{})),
+
+    cleanup(ok),
+    ?assertMatch({error, {written_archive_mismatch, _, _}}, Result).
+
+a_failed_write_stops_the_install_test() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:serve(body()),
+    ok = nh_ota_fake_flash:expect(#{avm_sha256 => digest(body())}),
+    ok = nh_ota_fake_esp:fail(write),
+
+    Result = nh_ota:apply_update(payload(body()), opts(#{})),
+    Nvs = nh_ota_fake_esp:nvs(),
+
+    cleanup(ok),
+    ?assertMatch({error, {write_failed, _, _}}, Result),
+    %% And nothing was armed, so the device still boots what it had.
+    ?assertEqual(undefined, maps:get({atomvm, boot_path}, Nvs, undefined)).
+
+a_refused_connection_is_an_error_not_a_crash_test() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:fail_connect(),
+    ok = nh_ota_fake_flash:expect(#{}),
+
+    Result = nh_ota:apply_update(payload(body()), opts(#{})),
+
+    cleanup(ok),
+    ?assertMatch({error, {connect_failed, _}}, Result).
+
+a_non_200_response_is_refused_test() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:serve(body(), 404),
+    ok = nh_ota_fake_flash:expect(#{}),
+
+    Result = nh_ota:apply_update(payload(body()), opts(#{})),
+
+    cleanup(ok),
+    ?assertEqual({error, {http_status, 404}}, Result).
+
+%% ------------------------------------------------------- pending/commit/revert
+
+markers_test_() ->
+    {setup, fun() -> nh_ota_fake_esp:start() end, fun(_) -> nh_ota_fake_esp:stop() end, [
+        {"nothing is pending on a fresh device", fun nothing_pending/0},
+        {"commit clears the markers an update left", fun commit_clears/0},
+        {"revert points the boot path back", fun revert_restores/0}
+    ]}.
+
+nothing_pending() ->
+    ?assertEqual(none, nh_ota:pending(#{esp => nh_ota_fake_esp})).
+
+commit_clears() ->
+    Opts = #{esp => nh_ota_fake_esp},
+    ok = nh_ota_fake_esp:nvs_set_binary(nerves_hub, pending_slot, ?SLOT),
+    ok = nh_ota_fake_esp:nvs_set_binary(nerves_hub, previous_slot, <<"main.avm">>),
+
+    ?assertEqual({ok, ?SLOT}, nh_ota:pending(Opts)),
+    ?assertEqual(ok, nh_ota:commit(Opts)),
+    ?assertEqual(none, nh_ota:pending(Opts)).
+
+revert_restores() ->
+    Opts = #{esp => nh_ota_fake_esp},
+    ok = nh_ota_fake_esp:nvs_set_binary(nerves_hub, previous_slot, <<"main.avm">>),
+
+    ?assertEqual({ok, <<"main.avm">>}, nh_ota:revert(Opts)),
+    ?assertEqual(
+        <<"/dev/partition/by-name/main.avm">>,
+        maps:get({atomvm, boot_path}, nh_ota_fake_esp:nvs())
+    ).

@@ -31,8 +31,9 @@
 %%-----------------------------------------------------------------------------
 -module(nh_ota).
 
--export([available/0, apply_update/1, apply_update/2, start_update/2, start_update/3]).
--export([pending/0, commit/0, revert/0]).
+-export([available/0, available/1, apply_update/1, apply_update/2]).
+-export([start_update/2, start_update/3]).
+-export([pending/0, pending/1, commit/0, commit/1, revert/0, revert/1]).
 -export([parse_url/1, digest_matches/2]).
 
 %% Our own NVS namespace. `atomvm' belongs to the loader, and writing our
@@ -50,14 +51,38 @@
 
 -type update_result() :: {ok, binary()} | {error, term()}.
 
+%% The three things here that only exist on a device: flash and NVS through
+%% `esp', the download through `ahttp_client', and reading back what was
+%% written through `nh_flash'. Each is a module name rather than a direct call,
+%% so a test can hand over one that records what it was asked to do.
+%%
+%% Same idiom as `transport' in `nh_agent', and for the same reason: the
+%% install path is the one place in this library where a mistake writes to
+%% flash, and it was the least tested because none of it could run off a board.
+-define(DEFAULT_ESP, esp).
+-define(DEFAULT_HTTP, ahttp_client).
+-define(DEFAULT_FLASH, nh_flash).
+
+esp(Opts) -> maps:get(esp, Opts, ?DEFAULT_ESP).
+http(Opts) -> maps:get(http, Opts, ?DEFAULT_HTTP).
+flash(Opts) -> maps:get(flash, Opts, ?DEFAULT_FLASH).
+
 %%-----------------------------------------------------------------------------
 %% @doc Whether this platform can write flash at all.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec available() -> boolean().
-available() ->
-    erlang:function_exported(esp, partition_write, 3) andalso
-        erlang:function_exported(esp, partition_erase_range, 3).
+available() -> available(#{}).
+
+%%-----------------------------------------------------------------------------
+%% @doc As `available/0', against a given `esp' module.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec available(map()) -> boolean().
+available(Opts) ->
+    Esp = esp(Opts),
+    erlang:function_exported(Esp, partition_write, 3) andalso
+        erlang:function_exported(Esp, partition_erase_range, 3).
 
 %%-----------------------------------------------------------------------------
 %% @equiv apply_update(Payload, #{})
@@ -76,7 +101,7 @@ apply_update(Payload) -> apply_update(Payload, #{}).
 %%-----------------------------------------------------------------------------
 -spec apply_update(map(), map()) -> update_result().
 apply_update(Payload, Opts) ->
-    case available() of
+    case available(Opts) of
         false ->
             {error, no_flash_access};
         true ->
@@ -88,7 +113,7 @@ apply_update(Payload, Opts) ->
 
 target_slot(Opts) ->
     case maps:get(slot, Opts, undefined) of
-        undefined -> nh_slots:other(nh_flash:boot_partition());
+        undefined -> nh_slots:other((flash(Opts)):boot_partition());
         Slot -> {ok, Slot}
     end.
 
@@ -100,8 +125,8 @@ download_into(Slot, Payload, Opts) ->
 
     case parse_url(Url) of
         {ok, Parsed} ->
-            case erase(Slot, Size) of
-                ok -> fetch(Slot, Parsed, Size, Checksum, Progress, maps:get(keys, Opts, []));
+            case erase(Slot, Size, Opts) of
+                ok -> fetch(Slot, Parsed, Size, Checksum, Progress, Opts);
                 {error, _} = Error -> Error
             end;
         {error, _} = Error ->
@@ -111,18 +136,18 @@ download_into(Slot, Payload, Opts) ->
 %% Only what the archive needs, rounded up to a sector. Whatever is left of the
 %% old archive beyond it is unreachable: a packbeam ends at its terminator and
 %% `nh_packbeam:byte_length/1' stops there.
-erase(_Slot, undefined) ->
+erase(_Slot, undefined, _Opts) ->
     {error, {missing_update_field, size}};
-erase(Slot, Size) when is_integer(Size), Size > 0 ->
+erase(Slot, Size, Opts) when is_integer(Size), Size > 0 ->
     Sectors = ((Size + ?BLOCK_SIZE - 1) div ?BLOCK_SIZE) * ?BLOCK_SIZE,
-    try apply(esp, partition_erase_range, [Slot, 0, Sectors]) of
+    try apply(esp(Opts), partition_erase_range, [Slot, 0, Sectors]) of
         ok -> ok;
         error -> {error, {erase_failed, Slot, Sectors}};
         Other -> {error, {unexpected_erase, Other}}
     catch
         _:Reason -> {error, {erase_failed, Reason}}
     end;
-erase(_Slot, Size) ->
+erase(_Slot, Size, _Opts) ->
     {error, {invalid_update_size, Size}}.
 
 fetch(
@@ -131,15 +156,18 @@ fetch(
     Size,
     Checksum,
     Progress,
-    Keys
+    Opts
 ) ->
-    case ahttp_client:connect(Protocol, Host, Port, [{active, true}]) of
+    Http = http(Opts),
+
+    case Http:connect(Protocol, Host, Port, [{active, true}]) of
         {ok, Conn} ->
-            case ahttp_client:request(Conn, <<"GET">>, Path, [], undefined) of
+            case Http:request(Conn, <<"GET">>, Path, [], undefined) of
                 {ok, Conn2, _Ref} ->
                     State = #{
                         slot => Slot,
-                        keys => Keys,
+                        keys => maps:get(keys, Opts, []),
+                        opts => Opts,
                         offset => 0,
                         written => 0,
                         buffer => <<>>,
@@ -150,20 +178,22 @@ fetch(
                         status => undefined
                     },
                     Result = receive_loop(Conn2, State),
-                    _ = ahttp_client:close(Conn2),
-                    finish(Result, Slot, Checksum);
+                    _ = Http:close(Conn2),
+                    finish(Result, Slot, Checksum, Opts);
                 {error, Reason} ->
-                    _ = ahttp_client:close(Conn),
+                    _ = Http:close(Conn),
                     {error, {request_failed, Reason}}
             end;
         {error, Reason} ->
             {error, {connect_failed, Reason}}
     end.
 
-receive_loop(Conn, State) ->
+receive_loop(Conn, #{opts := Opts} = State) ->
+    Http = http(Opts),
+
     receive
         Message ->
-            case ahttp_client:stream(Conn, Message) of
+            case Http:stream(Conn, Message) of
                 {ok, _ClosedConn, closed} ->
                     flush(State);
                 {ok, Conn2, Responses} ->
@@ -213,9 +243,9 @@ write(Chunk, #{buffer := Buffer, hash := Hash} = State) ->
 
 emit_blocks(Buffer, State) when byte_size(Buffer) < ?BLOCK_SIZE ->
     {ok, State#{buffer => Buffer}};
-emit_blocks(Buffer, #{slot := Slot, offset := Offset} = State) ->
+emit_blocks(Buffer, #{slot := Slot, offset := Offset, opts := Opts} = State) ->
     <<Block:?BLOCK_SIZE/binary, Rest/binary>> = Buffer,
-    case partition_write(Slot, Offset, Block) of
+    case partition_write(Slot, Offset, Block, Opts) of
         ok ->
             emit_blocks(Rest, State#{
                 offset => Offset + ?BLOCK_SIZE,
@@ -228,9 +258,11 @@ emit_blocks(Buffer, #{slot := Slot, offset := Offset} = State) ->
 %% The tail, which will not be a whole block. Flash writes want a multiple of
 %% four bytes, so it is padded; the archive's own length is what bounds it when
 %% it is read back, not the partition's.
-flush(#{buffer := Buffer, slot := Slot, offset := Offset} = State) when byte_size(Buffer) > 0 ->
+flush(#{buffer := Buffer, slot := Slot, offset := Offset, opts := Opts} = State) when
+    byte_size(Buffer) > 0
+->
     Padded = pad4(Buffer),
-    case partition_write(Slot, Offset, Padded) of
+    case partition_write(Slot, Offset, Padded, Opts) of
         ok ->
             {ok, State#{
                 buffer => <<>>,
@@ -243,24 +275,24 @@ flush(#{buffer := Buffer, slot := Slot, offset := Offset} = State) when byte_siz
 flush(State) ->
     {ok, State}.
 
-finish({ok, State}, Slot, Checksum) ->
+finish({ok, State}, Slot, Checksum, Opts) ->
     #{hash := Hash, written := Written, keys := Keys} = State,
     Digest = nh_metadata:hex(crypto:hash_final(Hash)),
 
     case digest_matches(Digest, Checksum) of
-        true -> verify_and_arm(Slot, Written, Digest, Keys);
+        true -> verify_and_arm(Slot, Written, Digest, Keys, Opts);
         false -> {error, {checksum_mismatch, Digest, Checksum}}
     end;
-finish({error, _} = Error, _Slot, _Checksum) ->
+finish({error, _} = Error, _Slot, _Checksum, _Opts) ->
     Error.
 
 %% Read it back before arming it. The digest proves what arrived over the wire;
 %% this proves what actually landed in flash.
-verify_and_arm(Slot, Written, Digest, Keys) ->
-    case nh_flash:read_metadata(Slot) of
+verify_and_arm(Slot, Written, Digest, Keys, Opts) ->
+    case (flash(Opts)):read_metadata(Slot) of
         {ok, Metadata} ->
             case maps:get(avm_sha256, Metadata) of
-                Digest -> check_signature(Slot, Metadata, Written, Keys);
+                Digest -> check_signature(Slot, Metadata, Written, Keys, Opts);
                 Other -> {error, {written_archive_mismatch, Other, Digest}}
             end;
         {error, Reason} ->
@@ -274,12 +306,12 @@ verify_and_arm(Slot, Written, Digest, Keys) ->
 %%
 %% This runs before the boot path moves, so a rejected archive sits in a slot
 %% nothing boots from and the device keeps running what it had.
-check_signature(Slot, Metadata, Written, []) ->
-    arm(Slot, Metadata, Written);
-check_signature(Slot, Metadata, Written, Keys) ->
-    case nh_flash:verify_signature(Slot, Keys) of
+check_signature(Slot, Metadata, Written, [], Opts) ->
+    arm(Slot, Metadata, Written, Opts);
+check_signature(Slot, Metadata, Written, Keys, Opts) ->
+    case (flash(Opts)):verify_signature(Slot, Keys) of
         {ok, _Key} ->
-            arm(Slot, Metadata, Written);
+            arm(Slot, Metadata, Written, Opts);
         {error, verification_unavailable} ->
             %% Keys were configured, so signatures were asked for, and this VM
             %% cannot check them -- see `nh_signature:available/0'. Installing
@@ -294,14 +326,14 @@ check_signature(Slot, Metadata, Written, Keys) ->
 %% device that loses power between the two boots what it was already running,
 %% while one that loses power after has the markers it needs to reverse the
 %% move.
-arm(Slot, _Metadata, _Written) ->
-    Previous = nh_flash:boot_partition(),
+arm(Slot, _Metadata, _Written, Opts) ->
+    Previous = (flash(Opts)):boot_partition(),
 
     with_ok(
         [
-            fun() -> nvs_put(?NVS_PREVIOUS, Previous) end,
-            fun() -> nvs_put(?NVS_PENDING, Slot) end,
-            fun() -> nvs_put_atomvm_boot_path(nh_slots:boot_path(Slot)) end
+            fun() -> nvs_put(?NVS_PREVIOUS, Previous, Opts) end,
+            fun() -> nvs_put(?NVS_PENDING, Slot, Opts) end,
+            fun() -> nvs_put_atomvm_boot_path(nh_slots:boot_path(Slot), Opts) end
         ],
         Slot
     ).
@@ -322,8 +354,15 @@ with_ok([Step | Rest], Result) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec pending() -> {ok, binary()} | none.
-pending() ->
-    case nvs_get(?NVS_PENDING) of
+pending() -> pending(#{}).
+
+%%-----------------------------------------------------------------------------
+%% @doc As `pending/0', against a given `esp' module.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec pending(map()) -> {ok, binary()} | none.
+pending(Opts) ->
+    case nvs_get(?NVS_PENDING, Opts) of
         undefined -> none;
         Slot -> {ok, Slot}
     end.
@@ -337,9 +376,16 @@ pending() ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec commit() -> ok | {error, term()}.
-commit() ->
-    case nvs_erase(?NVS_PENDING) of
-        ok -> nvs_erase(?NVS_PREVIOUS);
+commit() -> commit(#{}).
+
+%%-----------------------------------------------------------------------------
+%% @doc As `commit/0', against a given `esp' module.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec commit(map()) -> ok | {error, term()}.
+commit(Opts) ->
+    case nvs_erase(?NVS_PENDING, Opts) of
+        ok -> nvs_erase(?NVS_PREVIOUS, Opts);
         {error, _} = Error -> Error
     end.
 
@@ -351,14 +397,21 @@ commit() ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec revert() -> {ok, binary()} | {error, term()}.
-revert() ->
-    case nvs_get(?NVS_PREVIOUS) of
+revert() -> revert(#{}).
+
+%%-----------------------------------------------------------------------------
+%% @doc As `revert/0', against a given `esp' module.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec revert(map()) -> {ok, binary()} | {error, term()}.
+revert(Opts) ->
+    case nvs_get(?NVS_PREVIOUS, Opts) of
         undefined ->
             {error, nothing_to_revert_to};
         Previous ->
-            case nvs_put_atomvm_boot_path(nh_slots:boot_path(Previous)) of
+            case nvs_put_atomvm_boot_path(nh_slots:boot_path(Previous), Opts) of
                 ok ->
-                    _ = commit(),
+                    _ = commit(Opts),
                     {ok, Previous};
                 {error, _} = Error ->
                     Error
@@ -486,8 +539,8 @@ pad4(Bin) ->
         Rem -> <<Bin/binary, 0:((4 - Rem) * 8)>>
     end.
 
-partition_write(Slot, Offset, Data) ->
-    try apply(esp, partition_write, [Slot, Offset, Data]) of
+partition_write(Slot, Offset, Data, Opts) ->
+    try apply(esp(Opts), partition_write, [Slot, Offset, Data]) of
         ok -> ok;
         error -> {error, {write_failed, Slot, Offset}};
         Other -> {error, {unexpected_write, Other}}
@@ -495,24 +548,24 @@ partition_write(Slot, Offset, Data) ->
         _:Reason -> {error, {write_failed, Reason}}
     end.
 
-nvs_put_atomvm_boot_path(Path) ->
-    try apply(esp, nvs_set_binary, [atomvm, boot_path, Path]) of
+nvs_put_atomvm_boot_path(Path, Opts) ->
+    try apply(esp(Opts), nvs_set_binary, [atomvm, boot_path, Path]) of
         ok -> ok;
         Other -> {error, {boot_path_not_set, Other}}
     catch
         _:Reason -> {error, {boot_path_not_set, Reason}}
     end.
 
-nvs_put(Key, Value) ->
-    try apply(esp, nvs_set_binary, [?NVS_NAMESPACE, Key, Value]) of
+nvs_put(Key, Value, Opts) ->
+    try apply(esp(Opts), nvs_set_binary, [?NVS_NAMESPACE, Key, Value]) of
         ok -> ok;
         Other -> {error, {nvs_write_failed, Key, Other}}
     catch
         _:Reason -> {error, {nvs_write_failed, Key, Reason}}
     end.
 
-nvs_get(Key) ->
-    try apply(esp, nvs_get_binary, [?NVS_NAMESPACE, Key]) of
+nvs_get(Key, Opts) ->
+    try apply(esp(Opts), nvs_get_binary, [?NVS_NAMESPACE, Key]) of
         Value when is_binary(Value) -> Value;
         _ -> undefined
     catch
@@ -524,8 +577,8 @@ nvs_get(Key) ->
 %% failure worth reporting: swallowing it would let `commit/0' report a commit
 %% that did not happen, leaving the pending marker on flash while the device
 %% believes the firmware is validated.
-nvs_erase(Key) ->
-    try apply(esp, nvs_erase_key, [?NVS_NAMESPACE, Key]) of
+nvs_erase(Key, Opts) ->
+    try apply(esp(Opts), nvs_erase_key, [?NVS_NAMESPACE, Key]) of
         ok -> ok;
         Other -> {error, {nvs_erase_failed, Key, Other}}
     catch

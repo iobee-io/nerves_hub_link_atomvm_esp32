@@ -1,0 +1,112 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_console</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_console</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>The remote console NervesHub attaches to.
+
+
+<h2><a name="description">Description</a></h2><p>The remote console NervesHub attaches to.</p>
+ 
+  <p><code>nerves_hub_link</code> on Nerves answers the console channel with a real IEx  
+session over ExTTY, so an operator gets the language. AtomVM has no shell and  
+no ExTTY, so this is a debug terminal instead: a fixed set of commands that  
+answer the questions a console is usually opened to answer.</p>
+ 
+  <p>That difference is worth being plain about. This will not evaluate Erlang,  
+and it is not a way in to a running system — it reports, and it reboots.</p>
+ 
+  <h3><a name="The_protocol">The protocol</a></h3>
+ 
+  <p>NervesHub drives it over the <code>console</code> topic:</p>
+ 
+  <pre>  dn           %{"data" =&gt; Keystrokes}    server -&gt; device
+  window_size  %{"height" =&gt;, "width" =&gt;} server -&gt; device
+  restart                                 server -&gt; device
+  up           %{"data" =&gt; Output}        device -&gt; server</pre>
+ 
+  <p>Keystrokes arrive as they are typed, so this echoes them back: nothing else
+  is going to, and a terminal that shows nothing while you type reads as
+  broken. <code>restart</code> clears the session the way it restarts IEx on Nerves —
+  it does not restart the device, which is what <code>reboot</code> is for.</p>
+ 
+  File transfer is declined. <code>file-data/*</code> exists to push a file onto a device
+  with a filesystem to put it in, and this one has partitions.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-state">state()</a></h3>
+<p><code>state() = #{line := binary(), mode := input | escape | escape_bracket}</code></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#banner-0">banner/0</a></td><td>What to send when someone first attaches.</td></tr>
+<tr><td valign="top"><a href="#commands-0">commands/0</a></td><td>The commands and what each is for.</td></tr>
+<tr><td valign="top"><a href="#handle_input-2">handle_input/2</a></td><td>Feed keystrokes in, get terminal output back.</td></tr>
+<tr><td valign="top"><a href="#new-0">new/0</a></td><td>A console session with nothing typed.</td></tr>
+<tr><td valign="top"><a href="#parse-1">parse/1</a></td><td>Split a line into a command and its arguments.</td></tr>
+<tr><td valign="top"><a href="#prompt-0">prompt/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#restart-1">restart/1</a></td><td>Reset the session, as <code>restart</code> does to IEx on Nerves.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="banner-0">banner/0</a></h3>
+<div class="spec">
+<p><code>banner() -&gt; binary()</code><br></p>
+<p> </p>
+</div><p><p>What to send when someone first attaches.</p>
+ 
+  A console that says nothing until you type looks like one that is not
+  working, and the commands here are not guessable.</p>
+
+<h3 class="function"><a name="commands-0">commands/0</a></h3>
+<div class="spec">
+<p><code>commands() -&gt; [{binary(), binary()}]</code><br></p>
+<p> </p>
+</div><p>The commands and what each is for.</p>
+
+<h3 class="function"><a name="handle_input-2">handle_input/2</a></h3>
+<div class="spec">
+<p><code>handle_input(Data::binary(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, binary()}</code><br></p>
+<p> </p>
+</div><p><p>Feed keystrokes in, get terminal output back.</p>
+ 
+  Returns everything to send in one <code>up</code>, so a line that runs a command echoes
+  the newline, the output and the next prompt together.</p>
+
+<h3 class="function"><a name="new-0">new/0</a></h3>
+<div class="spec">
+<p><code>new() -&gt; <a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a></code><br></p>
+<p> </p>
+</div><p>A console session with nothing typed.</p>
+
+<h3 class="function"><a name="parse-1">parse/1</a></h3>
+<div class="spec">
+<p><code>parse(Line::binary()) -&gt; {binary(), [binary()]} | empty</code><br></p>
+<p> </p>
+</div><p>Split a line into a command and its arguments.</p>
+
+<h3 class="function"><a name="prompt-0">prompt/0</a></h3>
+<div class="spec">
+<p><code>prompt() -&gt; binary()</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="restart-1">restart/1</a></h3>
+<div class="spec">
+<p><code>restart(State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, binary()}</code><br></p>
+<p> </p>
+</div><p>Reset the session, as <code>restart</code> does to IEx on Nerves.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

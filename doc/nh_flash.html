@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_flash</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_flash</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Reading the running packbeam out of flash.
+
+
+<h2><a name="description">Description</a></h2><p>Reading the running packbeam out of flash.</p>
+ 
+  <p>The firmware NervesHub manages for an AtomVM device is the packbeam, and the  
+packbeam is in a partition, so a device can report what it is actually  
+running rather than a constant it was compiled with.</p>
+ 
+  <h3><a name="Knowing_which_partition">Knowing which partition</a></h3>
+ 
+  <p>AtomVM's <code>esp32init</code> records where it booted from in NVS, under <code>atomvm</code> /
+  <code>boot_path</code>, defaulting to <code>/dev/partition/by-name/main.avm</code>. So unlike
+  ESP-IDF — where a device cannot ask which of <code>ota_0</code>/<code>ota_1</code> is live, because
+  AtomVM exposes no <code>esp_ota_get_running_partition()</code> — an AtomVM device can  
+read the answer, and stays correct after an update that moved it.</p>
+ 
+  <p><code>boot_partition/0</code> reads it. An application may still name a partition  
+explicitly, but it no longer has to.</p>
+ 
+  <h3><a name="Reading_it">Reading it</a></h3>
+ 
+  <p>A partition is much larger than the archive written into it, and the digest  
+NervesHub matches covers the archive alone, so this walks entry by entry to  
+find where the archive ends rather than reading the partition whole.</p>
+ 
+  The walk hashes as it goes, with <code>crypto:hash_init/1</code> and friends, and keeps
+  only the one entry it needs. Nothing here holds the archive in memory, which
+  matters on a device with a few hundred kilobytes of it.
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#available-0">available/0</a></td><td>Whether this platform can read flash at all.</td></tr>
+<tr><td valign="top"><a href="#boot_partition-0">boot_partition/0</a></td><td>The partition label AtomVM booted this application from.</td></tr>
+<tr><td valign="top"><a href="#label_from_path-1">label_from_path/1</a></td><td>Turn the boot path <code>esp32init</code> stores into a partition label.</td></tr>
+<tr><td valign="top"><a href="#read_metadata-0">read_metadata/0</a></td><td>Equivalent to <a href="#read_metadata-1" docgen-rel="seemfa" docgen-href="#read_metadata/1"><code>read_metadata(boot_partition())</code></a>.
+</td></tr>
+<tr><td valign="top"><a href="#read_metadata-1">read_metadata/1</a></td><td>Read and describe the packbeam in the named partition.</td></tr>
+<tr><td valign="top"><a href="#signature_offset-1">signature_offset/1</a></td><td>Where the signature entry begins, which is where the signed range ends.</td></tr>
+<tr><td valign="top"><a href="#verify_signature-2">verify_signature/2</a></td><td>Check the signature of the archive in a partition.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="available-0">available/0</a></h3>
+<div class="spec">
+<p><code>available() -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p><p>Whether this platform can read flash at all.</p>
+ 
+  False everywhere except AtomVM on an ESP32 — on a desktop there is no <code>esp</code>
+  module, which is what makes the rest of the library testable off-device.</p>
+
+<h3 class="function"><a name="boot_partition-0">boot_partition/0</a></h3>
+<div class="spec">
+<p><code>boot_partition() -&gt; binary()</code><br></p>
+<p> </p>
+</div><p><p>The partition label AtomVM booted this application from.</p>
+ 
+  Reads NVS rather than guessing, so it stays right after an update that
+  switched slots. Falls back to the same default <code>esp32init</code> uses, which is
+  what a device that has never been switched is running.</p>
+
+<h3 class="function"><a name="label_from_path-1">label_from_path/1</a></h3>
+<div class="spec">
+<p><code>label_from_path(Path::binary() | string()) -&gt; binary()</code><br></p>
+<p> </p>
+</div><p><p>Turn the boot path <code>esp32init</code> stores into a partition label.</p>
+ 
+  It records <code>/dev/partition/by-name/main.avm</code>, while <code>esp:partition_read/3</code>
+  takes <code>main.avm</code>. The label is the last component.</p>
+
+<h3 class="function"><a name="read_metadata-0">read_metadata/0</a></h3>
+<div class="spec">
+<p><code>read_metadata() -&gt; {ok, map()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p>Equivalent to <a href="#read_metadata-1" docgen-rel="seemfa" docgen-href="#read_metadata/1"><code>read_metadata(boot_partition())</code></a>.</p>
+
+
+<h3 class="function"><a name="read_metadata-1">read_metadata/1</a></h3>
+<div class="spec">
+<p><code>read_metadata(Partition::binary() | string()) -&gt; {ok, map()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Read and describe the packbeam in the named partition.</p>
+ 
+  Returns what <code>nh_metadata:join_params/1</code> turns into join parameters.</p>
+
+<h3 class="function"><a name="signature_offset-1">signature_offset/1</a></h3>
+<div class="spec">
+<p><code>signature_offset(Partition::binary()) -&gt; {ok, non_neg_integer()} | none | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Where the signature entry begins, which is where the signed range ends.</p>
+ 
+  Exposed because it is the number both ends have to agree on, and a mismatch
+  is otherwise invisible from either side.</p>
+
+<h3 class="function"><a name="verify_signature-2">verify_signature/2</a></h3>
+<div class="spec">
+<p><code>verify_signature(Partition::binary(), PublicKeys::[binary()]) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Check the signature of the archive in a partition.</p>
+ 
+  <p>The signed range is every byte before the signature entry begins, and it is
+  mapped rather than read: <code>esp:partition_mmap/3</code> hands back a binary that  
+points at flash through the MMU, costing a few words of heap instead of the  
+size of the archive.</p>
+ 
+  <p>That is the only way this works on a device. Ed25519 signs a message rather  
+than a digest and there is no incremental verify, so the whole signed range  
+has to be addressable at once -- and an archive can be most of a megabyte  
+while the heap is a few hundred kilobytes.</p>
+ 
+  <code>{error, unsigned}</code> when the archive carries no signature entry, which the
+  caller decides what to do with.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

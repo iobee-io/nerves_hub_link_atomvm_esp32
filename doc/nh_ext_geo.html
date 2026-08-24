@@ -1,0 +1,93 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_ext_geo</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_ext_geo</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>The geo extension.
+
+
+<h2><a name="description">Description</a></h2><p>The geo extension.</p>
+ 
+  <p>NervesHub asks with <code>geo:location:request</code> and the device answers with
+  <code>geo:location:update</code>. There is no GPS here, so the answer comes from a
+  GeoIP lookup against the Nerves project's <code>whenwhere</code> service — the same
+  source <code>nerves_hub_link</code> uses by default, and about as accurate as an IP  
+address ever is.</p>
+ 
+  <pre>  #{source =&gt; &lt;&lt;"geoip"&gt;&gt;, latitude =&gt; -36.8869, longitude =&gt; 174.769}</pre>
+ 
+  <p>A failed lookup is reported rather than swallowed, as
+  <code>#{error_code, error_description}</code>, because a device that answers nothing  
+and a device that cannot resolve look identical from the platform.</p>
+ 
+  <h3><a name="Running_it">Running it</a></h3>
+ 
+  <code>resolve/0</code> makes a network request and blocks until it finishes, so it must
+  not run on the agent's process — that process has heartbeats to send. The
+  agent spawns <code>start_resolve/1</code>, which sends the result back.
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#default_url-0">default_url/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#event-0">event/0</a></td><td>The scoped event a location is sent as.</td></tr>
+<tr><td valign="top"><a href="#parse_response-1">parse_response/1</a></td><td>Turn a whenwhere response body into the payload NervesHub stores.</td></tr>
+<tr><td valign="top"><a href="#resolve-0">resolve/0</a></td><td>Equivalent to <a href="#resolve-1" docgen-rel="seemfa" docgen-href="#resolve/1"><code>resolve(default_url())</code></a>.
+</td></tr>
+<tr><td valign="top"><a href="#resolve-1">resolve/1</a></td><td>Ask a whenwhere-shaped service where this device is.</td></tr>
+<tr><td valign="top"><a href="#start_resolve-1">start_resolve/1</a></td><td>Resolve in a separate process, sending <code>{nh_ext_geo, Pid, Location}</code>.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="default_url-0">default_url/0</a></h3>
+<div class="spec">
+<p><code>default_url() -&gt; binary()</code><br></p>
+<p> </p>
+</div>
+
+<h3 class="function"><a name="event-0">event/0</a></h3>
+<div class="spec">
+<p><code>event() -&gt; binary()</code><br></p>
+<p> </p>
+</div><p>The scoped event a location is sent as.</p>
+
+<h3 class="function"><a name="parse_response-1">parse_response/1</a></h3>
+<div class="spec">
+<p><code>parse_response(Body::binary()) -&gt; map()</code><br></p>
+<p> </p>
+</div><p><p>Turn a whenwhere response body into the payload NervesHub stores.</p>
+ 
+  Coordinates come back as strings and are sent as numbers where they parse:
+  the platform draws them on a map, and a string is not a coordinate. One that
+  will not parse is passed through rather than dropped, so a change at the
+  service shows up as odd data instead of no data.</p>
+
+<h3 class="function"><a name="resolve-0">resolve/0</a></h3>
+<div class="spec">
+<p><code>resolve() -&gt; map()</code><br></p>
+<p> </p>
+</div><p>Equivalent to <a href="#resolve-1" docgen-rel="seemfa" docgen-href="#resolve/1"><code>resolve(default_url())</code></a>.</p>
+
+
+<h3 class="function"><a name="resolve-1">resolve/1</a></h3>
+<div class="spec">
+<p><code>resolve(Url::binary()) -&gt; map()</code><br></p>
+<p> </p>
+</div><p>Ask a whenwhere-shaped service where this device is.</p>
+
+<h3 class="function"><a name="start_resolve-1">start_resolve/1</a></h3>
+<div class="spec">
+<p><code>start_resolve(Owner::pid()) -&gt; pid()</code><br></p>
+<p> </p>
+</div><p>Resolve in a separate process, sending <code>{nh_ext_geo, Pid, Location}</code>.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

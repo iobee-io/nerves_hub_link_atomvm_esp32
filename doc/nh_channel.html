@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_channel</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_channel</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>The Phoenix channel protocol NervesHub speaks, as a pure state machine.
+
+
+<h2><a name="description">Description</a></h2><p>The Phoenix channel protocol NervesHub speaks, as a pure state machine.</p>
+ 
+  <p>No processes, no timers, no socket. Every function takes a state and returns  
+a new state plus a list of actions for the caller to perform:</p>
+ 
+  <pre>  {send, Binary}   %% write this to the socket
+  {event, Term}    %% tell the application this happened</pre>
+ 
+  <p>Keeping it pure is what lets the protocol be tested against a real NervesHub  
+from a desktop, over any WebSocket client, before any of it runs on a device.</p>
+ 
+  <h3><a name="The_wire_format">The wire format</a></h3>
+ 
+  <p>Phoenix's v2 serializer is a five element array rather than an object:</p>
+ 
+  <pre>  [JoinRef, Ref, Topic, Event, Payload]</pre>
+ 
+  <p>Two details are easy to get wrong and fail quietly:</p>
+ 
+  <ul>
+    <li>The device joins the topic <code>&lt;&lt;"device"&gt;&gt;</code>, unqualified. NervesHub's
+        serializer rewrites it to <code>device:&lt;id&gt;</code> on the way in.</li>
+    <li>Heartbeats go to <code>&lt;&lt;"phoenix"&gt;&gt;</code> with a <code>null</code> join reference, not to
+        the device topic.</li>
+  </ul>
+ 
+  <h3><a name="Rejoining">Rejoining</a></h3>
+ 
+  A channel does not survive a socket reconnect. <code>connected/1</code> must be called
+  on every connection, including reconnections, and it starts a fresh join with
+  a new join reference. A client that reconnects the socket without rejoining
+  looks healthy and silently stops receiving updates.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-action">action()</a></h3>
+<p><code>action() = {send, binary()} | {event, term()}</code></p>
+
+
+<h3 class="typedecl"><a name="type-state">state()</a></h3>
+<p><b>abstract datatype</b>: <code>state()</code></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_topic-3">add_topic/3</a></td><td>Register another topic to join on this socket.</td></tr>
+<tr><td valign="top"><a href="#connected-1">connected/1</a></td><td>Called on every connection, including reconnections.</td></tr>
+<tr><td valign="top"><a href="#disconnected-1">disconnected/1</a></td><td>The socket went away.</td></tr>
+<tr><td valign="top"><a href="#handle_text-2">handle_text/2</a></td><td>Handle a text frame from the socket.</td></tr>
+<tr><td valign="top"><a href="#heartbeat-1">heartbeat/1</a></td><td>A heartbeat frame.</td></tr>
+<tr><td valign="top"><a href="#joined-1">joined/1</a></td><td>Whether the join has been acknowledged.</td></tr>
+<tr><td valign="top"><a href="#joined-2">joined/2</a></td><td>Whether a named topic's join has been acknowledged.</td></tr>
+<tr><td valign="top"><a href="#new-1">new/1</a></td><td>A channel that has not connected yet.</td></tr>
+<tr><td valign="top"><a href="#push-3">push/3</a></td><td>Push an event to the device channel.</td></tr>
+<tr><td valign="top"><a href="#push-4">push/4</a></td><td>Push an event to a named topic.</td></tr>
+<tr><td valign="top"><a href="#topics-1">topics/1</a></td><td>Every topic registered, in join order.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="add_topic-3">add_topic/3</a></h3>
+<div class="spec">
+<p><code>add_topic(Topic::binary(), Params::map(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; <a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a></code><br></p>
+<p> </p>
+</div><p><p>Register another topic to join on this socket.</p>
+ 
+  <p>One socket carries several channels — the device topic, and <code>console</code> when  
+the application wants one. Each is joined separately and has its own join  
+reference, but they share the socket's reference counter: Phoenix correlates  
+a reply by reference, and two channels numbering from 1 apiece would produce  
+two different frames with the same reference.</p>
+ 
+  Topics keep the order they were added, so the device topic is joined first
+  and the rest follow.</p>
+
+<h3 class="function"><a name="connected-1">connected/1</a></h3>
+<div class="spec">
+<p><code>connected(State0::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [<a href="#type-action" docgen-rel="seetype" docgen-href="#action/0">action()</a>]}</code><br></p>
+<p> </p>
+</div><p>Called on every connection, including reconnections.</p>
+
+<h3 class="function"><a name="disconnected-1">disconnected/1</a></h3>
+<div class="spec">
+<p><code>disconnected(State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; <a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a></code><br></p>
+<p> </p>
+</div><p><p>The socket went away.</p>
+ 
+  Only the join is lost. The parameters and the reference counter are kept: a
+  fresh channel would restart references at 1, and a late reply from the old
+  connection could then be mistaken for a reply to the new join.</p>
+
+<h3 class="function"><a name="handle_text-2">handle_text/2</a></h3>
+<div class="spec">
+<p><code>handle_text(Text::binary(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [<a href="#type-action" docgen-rel="seetype" docgen-href="#action/0">action()</a>]}</code><br></p>
+<p> </p>
+</div><p>Handle a text frame from the socket.</p>
+
+<h3 class="function"><a name="heartbeat-1">heartbeat/1</a></h3>
+<div class="spec">
+<p><code>heartbeat(State0::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [<a href="#type-action" docgen-rel="seetype" docgen-href="#action/0">action()</a>]}</code><br></p>
+<p> </p>
+</div><p>A heartbeat frame. NervesHub closes a socket that stops sending these.</p>
+
+<h3 class="function"><a name="joined-1">joined/1</a></h3>
+<div class="spec">
+<p><code>joined(State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p>Whether the join has been acknowledged.</p>
+
+<h3 class="function"><a name="joined-2">joined/2</a></h3>
+<div class="spec">
+<p><code>joined(Topic::binary(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p>Whether a named topic's join has been acknowledged.</p>
+
+<h3 class="function"><a name="new-1">new/1</a></h3>
+<div class="spec">
+<p><code>new(Params::map()) -&gt; <a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a></code><br></p>
+<p> </p>
+</div><p><p>A channel that has not connected yet.</p>
+ 
+  <code>Params</code> is the join payload: what the device reports about itself.</p>
+
+<h3 class="function"><a name="push-3">push/3</a></h3>
+<div class="spec">
+<p><code>push(Event::binary(), Payload::map(), State::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [<a href="#type-action" docgen-rel="seetype" docgen-href="#action/0">action()</a>]}</code><br></p>
+<p> </p>
+</div><p>Push an event to the device channel.</p>
+
+<h3 class="function"><a name="push-4">push/4</a></h3>
+<div class="spec">
+<p><code>push(Topic::binary(), Event::binary(), Payload::map(), State0::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; {<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>, [<a href="#type-action" docgen-rel="seetype" docgen-href="#action/0">action()</a>]}</code><br></p>
+<p> </p>
+</div><p>Push an event to a named topic.</p>
+
+<h3 class="function"><a name="topics-1">topics/1</a></h3>
+<div class="spec">
+<p><code>topics(X1::<a href="#type-state" docgen-rel="seetype" docgen-href="#state/0">state()</a>) -&gt; [binary()]</code><br></p>
+<p> </p>
+</div><p>Every topic registered, in join order.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

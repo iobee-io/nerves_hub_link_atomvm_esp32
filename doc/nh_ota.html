@@ -1,0 +1,181 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_ota</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_ota</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Applying a firmware update.
+
+
+<h2><a name="description">Description</a></h2><p>Applying a firmware update.</p>
+ 
+  <p>NervesHub sends an <code>update</code> message naming a URL, a size and a SHA-256. This
+  downloads that archive into the slot the device is not running, checks it,
+  and points the boot path at it. Nothing reboots here — see <code>nh_slots</code> for the
+  slot model and <code>commit/0</code> and <code>revert/0</code> for what happens on the way back up.</p>
+ 
+  <h3><a name="Nothing_is_held_in_memory">Nothing is held in memory</a></h3>
+ 
+  <p>A packbeam is far larger than the heap an ESP32 has to spare, so the download
+  is streamed: <code>ahttp_client</code> hands back <code>{data, Ref, Bin}</code> as the socket  
+delivers it, each chunk is buffered only to a flash block, written, hashed  
+and dropped. Peak memory is one block, whatever the archive weighs.</p>
+ 
+  <h3><a name="What_is_checked,_and_when">What is checked, and when</a></h3>
+ 
+  <p>The digest is computed while writing rather than by reading the partition  
+back, so a download that was corrupted in flight is caught. The archive is  
+then read back from flash and walked, which catches a write that did not  
+land. Only after both does the boot path move.</p>
+ 
+  Order matters: until the boot path is written the device still boots what it
+  was running, so a failure at any earlier point costs nothing but the
+  download.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-update_result">update_result()</a></h3>
+<p><code>update_result() = {ok, binary()} | {error, term()}</code></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#apply_update-1">apply_update/1</a></td><td>Equivalent to <a href="#apply_update-2" docgen-rel="seemfa" docgen-href="#apply_update/2"><code>apply_update(Payload, #{})</code></a>.
+</td></tr>
+<tr><td valign="top"><a href="#apply_update-2">apply_update/2</a></td><td>Download and install an update, returning the slot it was written to.</td></tr>
+<tr><td valign="top"><a href="#available-0">available/0</a></td><td>Whether this platform can write flash at all.</td></tr>
+<tr><td valign="top"><a href="#available-1">available/1</a></td><td>As <code>available/0</code>, against a given <code>esp</code> module.</td></tr>
+<tr><td valign="top"><a href="#commit-0">commit/0</a></td><td>Accept the running firmware, so it is no longer on trial.</td></tr>
+<tr><td valign="top"><a href="#commit-1">commit/1</a></td><td>As <code>commit/0</code>, against a given <code>esp</code> module.</td></tr>
+<tr><td valign="top"><a href="#digest_matches-2">digest_matches/2</a></td><td>Compare a computed digest against the one NervesHub sent.</td></tr>
+<tr><td valign="top"><a href="#parse_url-1">parse_url/1</a></td><td>Split a firmware URL into what <code>ahttp_client:connect/4</code> takes.</td></tr>
+<tr><td valign="top"><a href="#pending-0">pending/0</a></td><td>The slot a reboot is on trial for, if any.</td></tr>
+<tr><td valign="top"><a href="#pending-1">pending/1</a></td><td>As <code>pending/0</code>, against a given <code>esp</code> module.</td></tr>
+<tr><td valign="top"><a href="#revert-0">revert/0</a></td><td>Point the boot path back at the firmware that was running before.</td></tr>
+<tr><td valign="top"><a href="#revert-1">revert/1</a></td><td>As <code>revert/0</code>, against a given <code>esp</code> module.</td></tr>
+<tr><td valign="top"><a href="#start_update-2">start_update/2</a></td><td>Run an update in its own process, reporting back to the caller.</td></tr>
+<tr><td valign="top"><a href="#start_update-3">start_update/3</a></td><td>As <code>start_update/2</code>, with options for <code>apply_update/2</code>.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="apply_update-1">apply_update/1</a></h3>
+<div class="spec">
+<p><code>apply_update(Payload::map()) -&gt; <a href="#type-update_result" docgen-rel="seetype" docgen-href="#update_result/0">update_result()</a></code><br></p>
+<p> </p>
+</div><p>Equivalent to <a href="#apply_update-2" docgen-rel="seemfa" docgen-href="#apply_update/2"><code>apply_update(Payload, #{})</code></a>.</p>
+
+
+<h3 class="function"><a name="apply_update-2">apply_update/2</a></h3>
+<div class="spec">
+<p><code>apply_update(Payload::map(), Opts::map()) -&gt; <a href="#type-update_result" docgen-rel="seetype" docgen-href="#update_result/0">update_result()</a></code><br></p>
+<p> </p>
+</div><p><p>Download and install an update, returning the slot it was written to.</p>
+ 
+  <code>Payload</code> is what NervesHub sends: <code>firmware_url</code>, <code>size</code> and <code>checksum</code>.
+  <code>Opts</code> may carry a <code>progress</code> function of one argument, called with a
+  percentage as the download proceeds, and a <code>slot</code> to override the target.</p>
+
+<h3 class="function"><a name="available-0">available/0</a></h3>
+<div class="spec">
+<p><code>available() -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p>Whether this platform can write flash at all.</p>
+
+<h3 class="function"><a name="available-1">available/1</a></h3>
+<div class="spec">
+<p><code>available(Opts::map()) -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p>As <code>available/0</code>, against a given <code>esp</code> module.</p>
+
+<h3 class="function"><a name="commit-0">commit/0</a></h3>
+<div class="spec">
+<p><code>commit() -&gt; ok | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Accept the running firmware, so it is no longer on trial.</p>
+ 
+  Called once the device has done something that proves the update worked —
+  joining NervesHub is the evidence this library uses, because an update that
+  cannot reach the server is one nothing could recover from remotely.</p>
+
+<h3 class="function"><a name="commit-1">commit/1</a></h3>
+<div class="spec">
+<p><code>commit(Opts::map()) -&gt; ok | {error, term()}</code><br></p>
+<p> </p>
+</div><p>As <code>commit/0</code>, against a given <code>esp</code> module.</p>
+
+<h3 class="function"><a name="digest_matches-2">digest_matches/2</a></h3>
+<div class="spec">
+<p><code>digest_matches(Digest::binary(), Checksum::binary() | undefined) -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p><p>Compare a computed digest against the one NervesHub sent.</p>
+ 
+  Case insensitive: NervesHub stores a firmware checksum upper case and this
+  library works in lower case, and a comparison that failed on that alone
+  would reject every good download.</p>
+
+<h3 class="function"><a name="parse_url-1">parse_url/1</a></h3>
+<div class="spec">
+<p><code>parse_url(Url::binary() | string() | undefined) -&gt; {ok, map()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Split a firmware URL into what <code>ahttp_client:connect/4</code> takes.</p>
+ 
+  Deliberately small: NervesHub hands out ordinary absolute URLs, and a full
+  URI parser is not something to carry onto a device for that.</p>
+
+<h3 class="function"><a name="pending-0">pending/0</a></h3>
+<div class="spec">
+<p><code>pending() -&gt; {ok, binary()} | none</code><br></p>
+<p> </p>
+</div><p><p>The slot a reboot is on trial for, if any.</p>
+ 
+  Set by an update and cleared by <code>commit/0</code>. A device that finds one here is
+  running firmware that has not yet proved itself.</p>
+
+<h3 class="function"><a name="pending-1">pending/1</a></h3>
+<div class="spec">
+<p><code>pending(Opts::map()) -&gt; {ok, binary()} | none</code><br></p>
+<p> </p>
+</div><p>As <code>pending/0</code>, against a given <code>esp</code> module.</p>
+
+<h3 class="function"><a name="revert-0">revert/0</a></h3>
+<div class="spec">
+<p><code>revert() -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Point the boot path back at the firmware that was running before.</p>
+ 
+  Does not reboot. The caller decides when, because reverting mid-flight and
+  rebooting immediately would cut off whatever it was trying to report.</p>
+
+<h3 class="function"><a name="revert-1">revert/1</a></h3>
+<div class="spec">
+<p><code>revert(Opts::map()) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p>As <code>revert/0</code>, against a given <code>esp</code> module.</p>
+
+<h3 class="function"><a name="start_update-2">start_update/2</a></h3>
+<div class="spec">
+<p><code>start_update(Payload::map(), Owner::pid()) -&gt; pid()</code><br></p>
+<p> </p>
+</div><p><p>Run an update in its own process, reporting back to the caller.</p>
+ 
+  The download takes as long as it takes, and the agent has heartbeats to send
+  while it runs — so it does not run on the agent's process. The caller
+  receives <code>{nh_ota, self(), {progress, Percent}}</code> as it goes and
+  <code>{nh_ota, self(), Result}</code> at the end.</p>
+
+<h3 class="function"><a name="start_update-3">start_update/3</a></h3>
+<div class="spec">
+<p><code>start_update(Payload::map(), Owner::pid(), Opts::map()) -&gt; pid()</code><br></p>
+<p> </p>
+</div><p>As <code>start_update/2</code>, with options for <code>apply_update/2</code>.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

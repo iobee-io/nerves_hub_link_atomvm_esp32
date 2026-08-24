@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_signature</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_signature</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Signing a packbeam, and checking one.
+
+
+<h2><a name="description">Description</a></h2><p>Signing a packbeam, and checking one.</p>
+ 
+  <p>Packbeam has no signature of its own: <code>atomvm_packbeam</code> writes none and
+  <code>avmpack_is_valid</code> compares the 24 byte magic and nothing else. This adds one  
+as a convention, in the shape fwup uses -- the signature travels inside the  
+archive, as a sibling of what it signs.</p>
+ 
+  <pre>  magic
+  entry, entry, ...                 the archive as built
+  nerves_hub/signature   (data)     appended
+  terminator</pre>
+ 
+  <p>The signed range is every byte before the signature entry begins. That is the  
+one rule a signature scheme has to get right: the signed bytes must exclude  
+the signature itself, or it cannot be checked without knowing what it was.</p>
+ 
+  <p>Signing is therefore a pure append. Nothing before the signature moves, so  
+both ends compute the same range without needing to agree on anything else.</p>
+ 
+  <h3><a name="Why_it_does_not_break_anything">Why it does not break anything</a></h3>
+ 
+  <p>The signature is a data entry, the same class as <code>priv/application.bin</code>,  
+which AtomVM already skips when it looks for code. A signed archive boots on  
+a stock AtomVM that knows nothing about signing, and on a device that does  
+not verify. Signing can only ever add a check, never take a device away.</p>
+ 
+  <p>Reading it is unaffected too: <code>nh_packbeam:byte_length/1</code> walks past the  
+entry to the terminator like any other.</p>
+ 
+  <h3><a name="Versioned,_and_namespaced">Versioned, and namespaced</a></h3>
+ 
+  <p>AtomVM may define its own signing one day. The entry is named under
+  <code>nerves_hub/</code> so it cannot collide with whatever that turns out to be, and  
+the payload leads with a magic and a version so a second scheme is additive  
+rather than a breaking change.</p>
+ 
+  <pre>  &lt;&lt;"NH1", Version:8, Signature:64/binary&gt;&gt;</pre>
+ 
+  Ed25519, because that is what an organization's fwup keys already are -- a
+  NervesHub organization can sign a packbeam with the key it already has.
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#available-0">available/0</a></td><td>Whether this VM can check an Ed25519 signature at all.</td></tr>
+<tr><td valign="top"><a href="#entry_name-0">entry_name/0</a></td><td>The entry a signature is carried in.</td></tr>
+<tr><td valign="top"><a href="#private_key-1">private_key/1</a></td><td>Read a signing key, as the seed <code>sign/2</code> wants.</td></tr>
+<tr><td valign="top"><a href="#public_key-1">public_key/1</a></td><td>Normalise a configured public key to the 32 raw bytes.</td></tr>
+<tr><td valign="top"><a href="#sign-2">sign/2</a></td><td>Sign an archive with an Ed25519 private key, returning a signed archive.</td></tr>
+<tr><td valign="top"><a href="#signed_range-1">signed_range/1</a></td><td>The bytes a signature covers, and the signature payload itself.</td></tr>
+<tr><td valign="top"><a href="#strip-1">strip/1</a></td><td>The archive without its signature, as it was before signing.</td></tr>
+<tr><td valign="top"><a href="#verify-2">verify/2</a></td><td>Check an archive against a list of Ed25519 public keys.</td></tr>
+<tr><td valign="top"><a href="#verify_parts-3">verify_parts/3</a></td><td>Check a signature against a range that has already been located.</td></tr>
+<tr><td valign="top"><a href="#version-0">version/0</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="available-0">available/0</a></h3>
+<div class="spec">
+<p><code>available() -&gt; boolean()</code><br></p>
+<p> </p>
+</div><p><p>Whether this VM can check an Ed25519 signature at all.</p>
+ 
+  <p>AtomVM's Ed25519 lives behind <code>AVM_USE_LIBSODIUM</code>, which is **off** in a
+  default build: <code>crypto:verify(eddsa, ...)</code> then raises rather than returning
+  false. Firmware built for signature checking has to be running an AtomVM
+  compiled with <code>-DAVM_USE_LIBSODIUM=ON</code>.</p>
+ 
+  <p>Asked before checking, so that "this VM cannot verify" is never reported as  
+"this firmware is not what it claims to be". They are different problems and  
+they need different fixes, and confusing them sends someone hunting for a  
+tampered archive that does not exist.</p>
+ 
+  Probed with a signature that cannot pass, so a supported VM answers false
+  without raising and an unsupported one raises.</p>
+
+<h3 class="function"><a name="entry_name-0">entry_name/0</a></h3>
+<div class="spec">
+<p><code>entry_name() -&gt; binary()</code><br></p>
+<p> </p>
+</div><p>The entry a signature is carried in.</p>
+
+<h3 class="function"><a name="private_key-1">private_key/1</a></h3>
+<div class="spec">
+<p><code>private_key(Key::binary() | string()) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Read a signing key, as the seed <code>sign/2</code> wants.</p>
+ 
+  <p>Takes fwup's 64 byte secret key or a bare 32 byte seed, base64 or raw. An  
+fwup private key is a seed followed by its public key, which is libsodium's  
+layout, and only the seed is used to sign.</p>
+ 
+  The counterpart of <code>public_key/1</code>, and deliberately not the same function.
+  That one refuses a 64 byte key, because what it parses ends up compiled into
+  firmware and quietly accepting a private key there would put a signing key
+  on every device in the fleet. This one is for a build machine, where a
+  private key is the point.</p>
+
+<h3 class="function"><a name="public_key-1">public_key/1</a></h3>
+<div class="spec">
+<p><code>public_key(Key::binary() | string()) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Normalise a configured public key to the 32 raw bytes.</p>
+ 
+  <p>Accepts the base64 an fwup <code>.pub</code> file holds, or the raw bytes.</p>
+ 
+  A 64 byte value is refused rather than helpfully taking its second half.
+  That is the layout of an fwup *private* key, and the keys handed to a device
+  are compiled into firmware -- quietly accepting one would put a signing key
+  on every device in the fleet.</p>
+
+<h3 class="function"><a name="sign-2">sign/2</a></h3>
+<div class="spec">
+<p><code>sign(Archive::binary(), PrivateKey::binary()) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Sign an archive with an Ed25519 private key, returning a signed archive.</p>
+ 
+  Signing an already signed archive replaces the signature rather than nesting
+  one inside another, so re-signing after a key rotation is the same operation.</p>
+
+<h3 class="function"><a name="signed_range-1">signed_range/1</a></h3>
+<div class="spec">
+<p><code>signed_range(Archive::binary()) -&gt; {ok, binary(), binary()} | none | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>The bytes a signature covers, and the signature payload itself.</p>
+ 
+  <code>none</code> when the archive carries no signature entry.</p>
+
+<h3 class="function"><a name="strip-1">strip/1</a></h3>
+<div class="spec">
+<p><code>strip(Archive::binary()) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p>The archive without its signature, as it was before signing.</p>
+
+<h3 class="function"><a name="verify-2">verify/2</a></h3>
+<div class="spec">
+<p><code>verify(Archive::binary(), PublicKeys::[binary()]) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Check an archive against a list of Ed25519 public keys.</p>
+ 
+  Returns the key that verified, so a caller can record which one it was.
+  <code>{error, unsigned}</code> and <code>{error, invalid_signature}</code> are deliberately
+  different: an archive nobody signed and an archive signed by someone else are
+  not the same problem.</p>
+
+<h3 class="function"><a name="verify_parts-3">verify_parts/3</a></h3>
+<div class="spec">
+<p><code>verify_parts(Signed::binary(), Payload::binary(), PublicKeys::[binary()]) -&gt; {ok, binary()} | {error, term()}</code><br></p>
+<p> </p>
+</div><p><p>Check a signature against a range that has already been located.</p>
+ 
+  <p>Separate from <code>verify/2</code> because a device does not have the archive in
+  memory. It maps the signed range out of flash with <code>esp:partition_mmap/3</code>,  
+which costs a few words of heap rather than the size of the archive, and  
+hands the mapped binary straight to this.</p>
+ 
+  That matters more than it looks. Ed25519 signs a message, not a digest, and
+  neither OTP nor AtomVM offers an incremental verify — so there is no way to
+  check one of these a chunk at a time. Mapping is what makes the scheme
+  workable on a device with a few hundred kilobytes of RAM and an archive
+  measured in hundreds.</p>
+
+<h3 class="function"><a name="version-0">version/0</a></h3>
+<div class="spec">
+<p><code>version() -&gt; pos_integer()</code><br></p>
+<p> </p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

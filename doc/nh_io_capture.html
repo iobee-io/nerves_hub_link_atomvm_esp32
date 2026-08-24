@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_io_capture</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_io_capture</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Send what an application prints to NervesHub.
+
+
+<h2><a name="description">Description</a></h2><p>Send what an application prints to NervesHub.</p>
+ 
+  <p><code>nh_logger</code> catches what goes through <code>logger</code>. This catches <code>io:format/2</code>,
+  <code>io:put_chars/1</code>, and Elixir's <code>IO.puts/1</code> and <code>IO.inspect/1</code> -- which is how  
+a great deal of AtomVM code, including most examples, actually reports what  
+it is doing.</p>
+ 
+  <pre>  {ok, Capture} = nh_io_capture:start(#{agent =&gt; nerves_hub_link}),
+  ok = nh_io_capture:attach(Capture)</pre>
+ 
+  <p><code>attach/1</code> makes the capture process the calling process's group leader.
+  <code>io:format/2</code> resolves <code>standard_io</code> to the group leader and sends it an
+  <code>io_request</code>, so everything that process prints arrives here.</p>
+ 
+  <p>Call it from the application's own process, early. <code>spawn</code> copies the  
+parent's group leader, so every process started after that call is captured  
+and every one started before it is not.</p>
+ 
+  <h3><a name="Sharp_edges">Sharp edges</a></h3>
+ 
+  <p>**A missing reply hangs the printer.** <code>io:execute_request/2</code> waits for
+  <code>{io_reply, Ref, _}</code> in a <code>receive</code> with no timeout, so a group leader that
+  does not answer a request blocks the process that printed, permanently.
+  Every request is answered here, including shapes this does not understand,
+  and the handling runs inside a <code>try</code> so that a crash still produces a reply.  
+That is why this module answers first and asks questions later.</p>
+ 
+  <p>**It must never print through <code>io</code>.** Echoing with <code>io:format/2</code> would send
+  the capture process a request it is already handling. It echoes with
+  <code>console:print/1</code>, and makes itself its own group leader so that anything
+  inside it that does reach <code>io</code> goes straight to the console instead of back  
+here.</p>
+ 
+  <p>**The text is unstructured.** <code>io:format/2</code> carries no level, no module and
+  no timestamp, so every line arrives at one level with the time it was
+  received. Where structure matters, use <code>logger</code> and <code>nh_logger</code>; this is the  
+net for code already written.</p>
+ 
+  <p>**Reading is answered with <code>eof</code>.** <code>io:get_line/1</code> and friends would  
+otherwise wait on a console this does not have.</p>
+ 
+  <p>**Attaching another process takes effect later.** <code>erlang:group_leader/2</code>
+  is synchronous only for the calling process; for any other it sends a signal
+  and returns, so a process that prints immediately can print somewhere else
+  first. Prefer <code>attach/1</code> and inheritance to <code>attach/2</code> on a process already  
+running.</p>
+ 
+  <p>**<code>logger_std_h</code> output is captured too, and duplicates.** <code>logger</code> runs its
+  handlers in the process that logged, and <code>logger_std_h</code> reports by printing,
+  so with a capture attached every line logged reaches NervesHub twice: once
+  structured from <code>nh_logger</code>, and once as the text <code>logger_std_h</code> printed.
+  <code>nh_console_h</code> is <code>logger_std_h</code> printing straight to the console instead,  
+and swapping it in resolves this.</p>
+ 
+  <h3><a name="What_it_cannot_catch">What it cannot catch</a></h3>
+ 
+  ESP-IDF's own logging -- the <code>I (1234) wifi: ...</code> lines -- is written to the
+  UART from C and never passes through Erlang.
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#attach-1">attach/1</a></td><td>Equivalent to <a href="#attach-2" docgen-rel="seemfa" docgen-href="#attach/2"><code>attach(Capture, self())</code></a>.
+</td></tr>
+<tr><td valign="top"><a href="#attach-2">attach/2</a></td><td>Make <code>Capture</code> the group leader of <code>Pid</code>.</td></tr>
+<tr><td valign="top"><a href="#detach-1">detach/1</a></td><td>Hand a process back to the group leader it had before capture.</td></tr>
+<tr><td valign="top"><a href="#start-0">start/0</a></td><td>Equivalent to <a href="#start-1" docgen-rel="seemfa" docgen-href="#start/1"><code>start(#{})</code></a>.
+</td></tr>
+<tr><td valign="top"><a href="#start-1">start/1</a></td><td>Start a capture process.</td></tr>
+<tr><td valign="top"><a href="#stop-1">stop/1</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="attach-1">attach/1</a></h3>
+<div class="spec">
+<p><code>attach(Capture::pid()) -&gt; ok</code><br></p>
+<p> </p>
+</div><p>Equivalent to <a href="#attach-2" docgen-rel="seemfa" docgen-href="#attach/2"><code>attach(Capture, self())</code></a>.</p>
+
+
+<h3 class="function"><a name="attach-2">attach/2</a></h3>
+<div class="spec">
+<p><code>attach(Capture::pid(), Pid::pid()) -&gt; ok</code><br></p>
+<p> </p>
+</div><p><p>Make <code>Capture</code> the group leader of <code>Pid</code>.</p>
+ 
+  Asynchronous for any process other than the caller, so anything <code>Pid</code> prints
+  in the meantime goes to its old leader. <code>attach/1</code> is synchronous.</p>
+
+<h3 class="function"><a name="detach-1">detach/1</a></h3>
+<div class="spec">
+<p><code>detach(Pid::pid()) -&gt; ok</code><br></p>
+<p> </p>
+</div><p><p>Hand a process back to the group leader it had before capture.</p>
+ 
+  A process that is its own group leader is how AtomVM spells "no group leader"
+  -- <code>io:put_chars/1</code> checks for exactly that and calls <code>console:print/1</code>
+  instead of sending a request -- so this puts printing back on the console.</p>
+
+<h3 class="function"><a name="start-0">start/0</a></h3>
+<div class="spec">
+<p><code>start() -&gt; {ok, pid()}</code><br></p>
+<p> </p>
+</div><p>Equivalent to <a href="#start-1" docgen-rel="seemfa" docgen-href="#start/1"><code>start(#{})</code></a>.</p>
+
+
+<h3 class="function"><a name="start-1">start/1</a></h3>
+<div class="spec">
+<p><code>start(Opts::map()) -&gt; {ok, pid()}</code><br></p>
+<p> </p>
+</div><p><p>Start a capture process.</p>
+ 
+  <code>agent</code> is the registered name or pid to send to, <code>level</code> the level every
+  line is reported at, and <code>echo</code> whether to keep printing to the console --
+  on by default, because a device whose console goes quiet the moment you turn
+  this on is a device nobody can debug.</p>
+
+<h3 class="function"><a name="stop-1">stop/1</a></h3>
+<div class="spec">
+<p><code>stop(Capture::pid()) -&gt; ok</code><br></p>
+<p> </p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

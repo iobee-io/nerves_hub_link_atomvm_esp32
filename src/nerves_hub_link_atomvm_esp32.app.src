@@ -8,5 +8,17 @@
     %% SPDX identifiers, and both of them: every source file says
     %% `Apache-2.0 OR LGPL-2.1-or-later' and so does LICENSE.
     {licenses, ["Apache-2.0", "LGPL-2.1-or-later"]},
-    {links, [{"GitHub", "https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32"}]}
+    {links, [{"GitHub", "https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32"}]},
+    %% An allow list. The examples are whole projects of their own and CI
+    %% config means nothing to a consumer, so neither ships.
+    {files, [
+        "src",
+        "priv",
+        "rebar.config",
+        "rebar.lock",
+        "README.md",
+        "CHANGELOG.md",
+        "LICENSE",
+        "LICENSES"
+    ]}
 ]}.

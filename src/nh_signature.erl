@@ -196,17 +196,6 @@ verifies(_Signed, _Signature, _Key) ->
     false.
 
 %%-----------------------------------------------------------------------------
-%% @doc Normalise a configured public key to the 32 raw bytes.
-%%
-%% Accepts the base64 an fwup `.pub' file holds, or the raw bytes.
-%%
-%% A 64 byte value is refused rather than helpfully taking its second half.
-%% That is the layout of an fwup *private* key, and the keys handed to a device
-%% are compiled into firmware -- quietly accepting one would put a signing key
-%% on every device in the fleet.
-%% @end
-%%-----------------------------------------------------------------------------
-%%-----------------------------------------------------------------------------
 %% @doc Read a signing key, as the seed `sign/2' wants.
 %%
 %% Takes fwup's 64 byte secret key or a bare 32 byte seed, base64 or raw. An
@@ -255,6 +244,17 @@ base64_decoded(Key) ->
         _:_ -> {error, not_base64}
     end.
 
+%%-----------------------------------------------------------------------------
+%% @doc Normalise a configured public key to the 32 raw bytes.
+%%
+%% Accepts the base64 an fwup `.pub' file holds, or the raw bytes.
+%%
+%% A 64 byte value is refused rather than helpfully taking its second half.
+%% That is the layout of an fwup *private* key, and the keys handed to a device
+%% are compiled into firmware -- quietly accepting one would put a signing key
+%% on every device in the fleet.
+%% @end
+%%-----------------------------------------------------------------------------
 -spec public_key(binary() | string()) -> {ok, binary()} | {error, term()}.
 public_key(Key) when is_list(Key) ->
     public_key(list_to_binary(Key));

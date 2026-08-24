@@ -1,0 +1,113 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module nh_logger</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module nh_logger</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>A <code>logger</code> handler that sends log events to NervesHub.
+
+
+<h2><a name="description">Description</a></h2><p>A <code>logger</code> handler that sends log events to NervesHub.</p>
+ 
+  <p>Saves an application from calling <code>nerves_hub_link:send_log/3</code> by hand, which  
+is the difference between a logging extension that gets used and one that is  
+forgotten.</p>
+ 
+  <pre>  logger_manager:start_link(#{
+      log_level =&gt; info,
+      logger =&gt; [
+          {handler, default, logger_std_h, #{}},
+          nh_logger:handler(#{level =&gt; info})
+      ]
+  })</pre>
+ 
+  <p>Handlers are given to <code>logger_manager</code> when it starts and there is no
+  <code>add_handler/3</code> on AtomVM, so this is arranged by the application at startup
+  rather than by the agent when it connects. Nothing starts <code>logger_manager</code>  
+on AtomVM either: an application that wants logging at all has to start it,  
+and one that does not has no handlers for this to be added to.</p>
+ 
+  <h3><a name="What_it_does_not_catch">What it does not catch</a></h3>
+ 
+  <p>Only what goes through <code>logger</code>. <code>io:format/2</code>, <code>console:print/1</code> and
+  Elixir's <code>IO.puts/1</code> write straight to the console and never reach a handler,  
+and a good deal of AtomVM code — including most examples — logs that way.</p>
+ 
+  <p>Elixir has no <code>Logger</code> on AtomVM at all: <code>exavmlib</code> does not ship one, so an
+  Elixir application calls <code>:logger</code> directly and is caught by the same
+  handler. There is nothing that can be done for <code>IO.puts</code>.</p>
+ 
+  <h3><a name="Messages_must_be_charlists_or_reports">Messages must be charlists or reports</a></h3>
+ 
+  <p><code>logger:do_log/4</code> accepts a list or a map and raises <code>badarg</code> on anything  
+else, so a **binary message crashes the process that logged it** before any  
+handler runs. That is upstream of this module and nothing here can soften  
+it.</p>
+ 
+  <p>It catches Elixir code in particular, where the obvious call is the one that  
+fails:</p>
+ 
+      <p>:logger.info("started")            %% badarg, a binary      
+:logger.info(~c"started")          %% fine, a charlist      
+:logger.info(#{event =&gt; started})  %% fine, a report</p>
+ 
+  <p>Erlang code is less exposed, since a double-quoted string is already a list  
+there.</p>
+ 
+  <h3><a name="Finding_the_agent">Finding the agent</a></h3>
+ 
+  The handler is configured before the agent exists, so it looks the agent up
+  by registered name each time. Start the agent with <code>register =&gt; Name</code> to give
+  it one. Until it is registered, and after it stops, events are dropped rather
+  than queued: a device that cannot talk to NervesHub should not spend its
+  memory remembering why.
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#handler-0">handler/0</a></td><td>Equivalent to <a href="#handler-1" docgen-rel="seemfa" docgen-href="#handler/1"><code>handler(#{level =&gt; info})</code></a>.
+</td></tr>
+<tr><td valign="top"><a href="#handler-1">handler/1</a></td><td>The entry to add to <code>logger_manager</code>'s handler list.</td></tr>
+<tr><td valign="top"><a href="#log-2">log/2</a></td><td>Called by <code>logger</code> for each event this handler's level allows.</td></tr>
+<tr><td valign="top"><a href="#message-1">message/1</a></td><td>Render a <code>logger</code> message as text.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="handler-0">handler/0</a></h3>
+<div class="spec">
+<p><code>handler() -&gt; tuple()</code><br></p>
+<p> </p>
+</div><p>Equivalent to <a href="#handler-1" docgen-rel="seemfa" docgen-href="#handler/1"><code>handler(#{level =&gt; info})</code></a>.</p>
+
+
+<h3 class="function"><a name="handler-1">handler/1</a></h3>
+<div class="spec">
+<p><code>handler(Config::map()) -&gt; tuple()</code><br></p>
+<p> </p>
+</div><p>The entry to add to <code>logger_manager</code>'s handler list.</p>
+
+<h3 class="function"><a name="log-2">log/2</a></h3>
+<div class="spec">
+<p><code>log(Event::map(), Config::map()) -&gt; ok</code><br></p>
+<p> </p>
+</div><p>Called by <code>logger</code> for each event this handler's level allows.</p>
+
+<h3 class="function"><a name="message-1">message/1</a></h3>
+<div class="spec">
+<p><code>message(Other::term()) -&gt; binary()</code><br></p>
+<p> </p>
+</div><p><p>Render a <code>logger</code> message as text.</p>
+ 
+  <code>logger</code> hands over one of three shapes, and a handler has to render all of
+  them or lose whichever it does not. Public so that <code>nh_console_h</code> renders a
+  line the same way this does.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>
