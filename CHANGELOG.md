@@ -5,7 +5,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.0]
+## [0.1.1] - 2026-08-24
+
+### Fixed
+
+- The **Installing** snippet in the README asked for a git dependency, which is
+  what it was before this package was on Hex. Documentation only; no code
+  changed between 0.1.0 and this.
+
+### Added
+
+- `RELEASING.md`, listing every file a release has to touch. The README
+  dependency snippet is the one nothing checks and the one that was wrong here.
+
+## [0.1.0] - 2026-08-24
 
 First release. A NervesHub device agent for AtomVM on the ESP32, verified on
 hardware against a running NervesHub rather than only against tests.
@@ -33,5 +46,6 @@ hardware against a running NervesHub rather than only against tests.
 - `priv/atomvm`, the partition table and build settings a device needs, so the
   VM is reproducible rather than described.
 
-[Unreleased]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/releases/tag/v0.1.0

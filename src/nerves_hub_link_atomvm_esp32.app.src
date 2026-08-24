@@ -1,6 +1,6 @@
 {application, nerves_hub_link_atomvm_esp32, [
     {description, "NervesHub device agent for AtomVM on the ESP32"},
-    {vsn, "0.1.0"},
+    {vsn, "0.1.1"},
     {registered, []},
     {applications, [kernel, stdlib]},
     {env, []},

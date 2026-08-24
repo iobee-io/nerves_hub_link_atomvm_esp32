@@ -105,9 +105,7 @@ each line.
 
 ```erlang
 {deps, [
-    {nerves_hub_link_atomvm_esp32,
-        {git, "https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32.git",
-            {branch, "main"}}},
+    {nerves_hub_link_atomvm_esp32, "~> 0.1"},
     {atomvm_websocket_client,
         {git, "https://github.com/nerves-hub/atomvm_websocket_client.git",
             {branch, "main"}}}
@@ -118,7 +116,9 @@ The transport is a separate dependency and is not optional: it is what the
 agent talks to NervesHub over. It is also an ESP-IDF component, so it has to be
 compiled into the VM as well as listed here. See [building the VM](#building-the-vm).
 
-Not on Hex yet, which is why these are git dependencies.
+It stays a git dependency because it is not on Hex: it is an ESP-IDF component
+first and an Erlang library second, and the half that matters is compiled into
+the VM rather than fetched by rebar3.
 
 ## Usage
 
