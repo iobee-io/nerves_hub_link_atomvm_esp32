@@ -47,7 +47,6 @@
 -define(BLOCK_SIZE, 4096).
 
 %% How much of the socket to take at once.
--define(RECV_TIMEOUT, 30000).
 
 -type update_result() :: {ok, binary()} | {error, term()}.
 
@@ -160,7 +159,10 @@ fetch(
 ) ->
     Http = http(Opts),
 
-    case Http:connect(Protocol, Host, Port, [{active, true}]) of
+    %% Passive because AtomVM's `ssl' asserts `{active, false}', and verified
+    %% against the bundled CAs. A tampered archive is refused regardless:
+    %% `finish/4' checks the sha256 NervesHub sent over the device socket.
+    case Http:connect(Protocol, Host, Port, [{active, false}, {verify, verify_peer}]) of
         {ok, Conn} ->
             case Http:request(Conn, <<"GET">>, Path, [], undefined) of
                 {ok, Conn2, _Ref} ->
@@ -177,7 +179,7 @@ fetch(
                         reported => -1,
                         status => undefined
                     },
-                    Result = receive_loop(Conn2, State),
+                    Result = recv_loop(Conn2, State),
                     _ = Http:close(Conn2),
                     finish(Result, Slot, Checksum, Opts);
                 {error, Reason} ->
@@ -188,27 +190,22 @@ fetch(
             {error, {connect_failed, Reason}}
     end.
 
-receive_loop(Conn, #{opts := Opts} = State) ->
+recv_loop(Conn, #{opts := Opts} = State) ->
     Http = http(Opts),
 
-    receive
-        Message ->
-            case Http:stream(Conn, Message) of
-                {ok, _ClosedConn, closed} ->
-                    flush(State);
-                {ok, Conn2, Responses} ->
-                    case handle(Responses, State) of
-                        {done, Final} -> flush(Final);
-                        {continue, Next} -> receive_loop(Conn2, Next);
-                        {error, _} = Error -> Error
-                    end;
-                unknown ->
-                    receive_loop(Conn, State);
-                {error, Reason} ->
-                    {error, {stream_failed, Reason}}
-            end
-    after ?RECV_TIMEOUT ->
-        {error, download_timeout}
+    case Http:recv(Conn, 0) of
+        {ok, Conn2, Responses} ->
+            case handle(Responses, State) of
+                {done, Final} -> flush(Final);
+                {continue, Next} -> recv_loop(Conn2, Next);
+                {error, _} = Error -> Error
+            end;
+        %% Passive mode reports a peer close as an error even when the response
+        %% was complete, which is how a body with no length ends.
+        {error, {_Transport, closed}} ->
+            flush(State);
+        {error, Reason} ->
+            {error, {stream_failed, Reason}}
     end.
 
 handle([], State) ->
