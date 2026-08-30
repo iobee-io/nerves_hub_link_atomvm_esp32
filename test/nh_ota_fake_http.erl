@@ -4,15 +4,14 @@
 
 %% @doc An `ahttp_client' that serves a binary from memory.
 %%
-%% `nh_ota' drives the download with `connect', `request' and then `stream' over
-%% whatever lands in its mailbox, so this only has to deliver the messages
-%% `stream/2' would decode. The body is handed out in chunks to exercise
-%% buffering across block boundaries, which is where a streaming writer goes
-%% wrong.
+%% `nh_ota' drives the download with `connect', `request' and then `recv', so
+%% this hands back one batch of responses per call. The body is handed out in
+%% chunks to exercise buffering across block boundaries, which is where a
+%% streaming writer goes wrong.
 -module(nh_ota_fake_http).
 
 -export([serve/1, serve/2, fail_connect/0, stop/0]).
--export([connect/4, request/5, stream/2, close/1]).
+-export([connect/4, request/5, recv/2, close/1]).
 
 -define(NAME, ?MODULE).
 
@@ -21,12 +20,14 @@ serve(Body) -> serve(Body, 200).
 
 serve(Body, Status) ->
     stop(),
-    register(?NAME, spawn(fun() -> loop(#{body => Body, status => Status, connect => ok}) end)),
+    State = #{connect => ok, batches => batches(Body, Status)},
+    register(?NAME, spawn(fun() -> loop(State) end)),
     ok.
 
 fail_connect() ->
     stop(),
-    register(?NAME, spawn(fun() -> loop(#{body => <<>>, status => 200, connect => fail}) end)),
+    State = #{connect => fail, batches => []},
+    register(?NAME, spawn(fun() -> loop(State) end)),
     ok.
 
 stop() ->
@@ -43,19 +44,19 @@ stop() ->
 
 connect(_Protocol, _Host, _Port, _Opts) ->
     case call(connect) of
-        ok ->
-            %% The responses this download will see, delivered as one message
-            %% so `stream/2' has something to decode.
-            self() ! {fake_http, call(responses)},
-            {ok, conn};
-        fail ->
-            {error, refused}
+        ok -> {ok, conn};
+        fail -> {error, refused}
     end.
 
 request(Conn, _Method, _Path, _Headers, _Body) -> {ok, Conn, ref}.
 
-stream(_Conn, {fake_http, Responses}) -> {ok, conn, Responses};
-stream(_Conn, _Other) -> unknown.
+%% A spent body reports the peer close, which is what passive mode gives a
+%% caller in place of active mode's `closed' response.
+recv(_Conn, _Len) ->
+    case call(next) of
+        spent -> {error, {ssl, closed}};
+        Responses -> {ok, conn, Responses}
+    end.
 
 close(_Conn) -> ok.
 
@@ -75,16 +76,23 @@ loop(State) ->
         {From, connect} ->
             From ! {?NAME, maps:get(connect, State)},
             loop(State);
-        {From, responses} ->
-            From ! {?NAME, responses(State)},
-            loop(State)
+        {From, next} ->
+            case maps:get(batches, State) of
+                [] ->
+                    From ! {?NAME, spent},
+                    loop(State);
+                [Batch | Rest] ->
+                    From ! {?NAME, Batch},
+                    loop(State#{batches => Rest})
+            end
     end.
 
-%% 1500 bytes at a time, so a 4096 byte block boundary falls mid-chunk.
-responses(#{body := Body, status := Status}) ->
-    [{status, ref, Status}, {header, ref, {<<"content-type">>, <<"application/octet-stream">>}}] ++
-        [{data, ref, Chunk} || Chunk <- chunks(Body, 1500)] ++
-        [{done, ref}].
+%% One batch per `recv', 1500 bytes at a time, so a 4096 byte block boundary
+%% falls mid-chunk.
+batches(Body, Status) ->
+    [[{status, ref, Status}, {header, ref, {<<"content-type">>, <<"application/octet-stream">>}}]] ++
+        [[{data, ref, Chunk}] || Chunk <- chunks(Body, 1500)] ++
+        [[{done, ref}]].
 
 chunks(<<>>, _Size) -> [];
 chunks(Bin, Size) when byte_size(Bin) =< Size -> [Bin];
