@@ -397,12 +397,13 @@ update_failed(Reason, State) ->
     reopen(maps:remove(update, State#{failure => Reason})).
 
 report_failure(State) ->
-    case maps:take(failure, State) of
-        {Reason, State1} ->
+    %% Not `maps:take/2': AtomVM does not have it.
+    case maps:find(failure, State) of
+        {ok, Reason} ->
             push_event(
                 <<"status_update">>,
                 #{<<"status">> => <<"failed">>, <<"reason">> => Reason},
-                State1
+                maps:remove(failure, State)
             );
         error ->
             State
