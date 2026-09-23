@@ -234,7 +234,17 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
     ?assertMatch({update_started, _Pid}, next_event(1000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
 
-    %% and the failure goes back to NervesHub rather than only to the log
+    %% the socket was closed for the download and reopened after it
+    receive
+        closed -> ok
+    after 1000 -> erlang:error(never_closed)
+    end,
+    _ = next_opened(),
+
+    %% and the failure goes back to NervesHub once it has joined again
+    Agent ! {websocket, fake_handle, connected},
+    [JoinRef2, Ref2 | _] = json:decode(next_sent(1000)),
+    ok = reply(Agent, JoinRef2, Ref2, <<"device">>),
     Reported = wait_for_event(<<"status_update">>, 2000),
     ?assertEqual(<<"failed">>, maps:get(<<"status">>, Reported)),
     ?assertEqual(<<"no_flash_access">>, maps:get(<<"reason">>, Reported)),

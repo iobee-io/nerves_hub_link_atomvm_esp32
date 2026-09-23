@@ -37,6 +37,13 @@
 %% as an absolute time rather than a `receive ... after' timeout, so a steady
 %% stream of incoming messages cannot keep pushing the heartbeat out and get the
 %% device disconnected while it looks busy and healthy.
+%%
+%% == Updates ==
+%%
+%% The socket is closed while an update downloads and reopened afterwards. An
+%% ESP32 without PSRAM has room for one TLS session, not two: the download's
+%% handshake leaves too little heap for the next record on either connection.
+%% A failure is reported to NervesHub once the device has joined again.
 %% @end
 %%-----------------------------------------------------------------------------
 -module(nh_agent).
@@ -124,6 +131,7 @@ init(Config, Owner) ->
     case open(Transport, Config) of
         {ok, Handle} ->
             loop(#{
+                config => Config,
                 transport => Transport,
                 handle => Handle,
                 owner => Owner,
@@ -179,37 +187,26 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
             loop(push_extension(nh_ext_geo:event(), Location, State));
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(updater_down(Pid, Reason, State));
-        {nh_ota, _Pid, {progress, Percent}} ->
-            loop(
-                push_event(
-                    <<"update_progress">>,
-                    #{<<"value">> => Percent, <<"stage">> => <<"downloading">>},
-                    State
-                )
-            );
+        %% Nowhere to send progress while the socket is closed for the download.
+        {nh_ota, _Pid, {progress, _Percent}} ->
+            loop(State);
         {nh_ota, _Pid, {ok, Slot}} ->
             %% Written and armed, not yet running. Rebooting is the
             %% application's call: it may have work to finish first, and a
             %% library that restarts a device on its own is a library that
             %% surprises someone.
             notify(State, {update_ready, Slot}),
-            loop(maps:remove(update, State));
+            loop(reopen(maps:remove(update, State)));
         {nh_ota, _Pid, {error, Reason}} ->
             notify(State, {update_failed, Reason}),
-            State1 = push_event(
-                <<"status_update">>,
-                #{<<"status">> => <<"failed">>, <<"reason">> => describe(Reason)},
-                State
-            ),
-            loop(maps:remove(update, State1));
+            loop(update_failed(describe(Reason), State));
         {push_extension, Event, Payload} ->
             loop(push_extension(Event, Payload, State));
         {push, Event, Payload} ->
             {Channel, Actions} = nh_channel:push(Event, Payload, maps:get(channel, State)),
             loop(run(Actions, State#{channel => Channel}));
         stop ->
-            Transport = maps:get(transport, State),
-            Transport:close(maps:get(handle, State)),
+            _ = close(State),
             ok;
         Other ->
             notify(State, {unexpected, Other}),
@@ -225,6 +222,9 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
 run(Actions, State) ->
     lists:foldl(fun run_action/2, State, Actions).
 
+%% Closed for a download: whatever was queued is lost with the join anyway.
+run_action({send, _Frame}, #{handle := undefined} = State) ->
+    State;
 run_action({send, Frame}, State) ->
     Transport = maps:get(transport, State),
     case Transport:send_text(maps:get(handle, State), Frame) of
@@ -242,7 +242,7 @@ run_action({event, Event}, State) ->
 %% reported by name.
 handle_event({joined, <<"device">>, Response}, State) ->
     notify(State, {joined, Response}),
-    validate_pending(State);
+    report_failure(validate_pending(State));
 handle_event({joined, <<"extensions">>, Response}, State) ->
     {Extensions, Actions} = nh_extensions:attach(Response, maps:get(extensions, State)),
     notify(State, {extensions_attached, nh_extensions:attached(Extensions)}),
@@ -344,11 +344,12 @@ maybe_start_update(Payload, State) ->
 
     case {maps:get(updates, State, auto), Available, maps:is_key(update, State)} of
         {auto, true, false} ->
+            State1 = close(State),
             Pid = nh_ota:start_update(Payload, self(), #{
-                keys => maps:get(firmware_keys, State, [])
+                keys => maps:get(firmware_keys, State1, [])
             }),
-            notify(State, {update_started, Pid}),
-            State#{update => Pid};
+            notify(State1, {update_started, Pid}),
+            State1#{update => Pid};
         {auto, true, true} ->
             %% One at a time. A second `update' while a download is in flight is
             %% the server repeating itself, not a new job.
@@ -363,18 +364,49 @@ updater_down(Pid, Reason, State) when Reason =/= normal ->
     case maps:get(update, State, undefined) of
         Pid ->
             notify(State, {update_failed, {updater_crashed, Reason}}),
-
-            State1 = push_event(
-                <<"status_update">>,
-                #{<<"status">> => <<"failed">>, <<"reason">> => <<"updater_crashed">>},
-                State
-            ),
-            maps:remove(update, State1);
+            update_failed(<<"updater_crashed">>, State);
         _Other ->
             State
     end;
 updater_down(_Pid, _Reason, State) ->
     State.
+
+close(#{handle := undefined} = State) ->
+    State;
+close(#{transport := Transport, handle := Handle} = State) ->
+    _ = Transport:close(Handle),
+    State#{
+        handle => undefined,
+        channel => nh_channel:disconnected(maps:get(channel, State)),
+        heartbeat_at => infinity
+    }.
+
+%% Joining again is left to `connected', as on any other connection.
+reopen(#{handle := undefined, transport := Transport, config := Config} = State) ->
+    case open(Transport, Config) of
+        {ok, Handle} ->
+            State#{handle => Handle};
+        {error, Reason} ->
+            notify(State, {transport_error, Reason}),
+            exit({transport_error, Reason})
+    end;
+reopen(State) ->
+    State.
+
+update_failed(Reason, State) ->
+    reopen(maps:remove(update, State#{failure => Reason})).
+
+report_failure(State) ->
+    case maps:take(failure, State) of
+        {Reason, State1} ->
+            push_event(
+                <<"status_update">>,
+                #{<<"status">> => <<"failed">>, <<"reason">> => Reason},
+                State1
+            );
+        error ->
+            State
+    end.
 
 %% Console output only goes anywhere if the channel joined, and `push/4'
 %% already refuses on a topic that has not.
