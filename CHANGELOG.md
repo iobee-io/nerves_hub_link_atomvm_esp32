@@ -5,6 +5,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- An update's download no longer starts until the closed socket's transport is
+  gone and its memory is back. Closing returned first, the download's TLS
+  handshake took nearly every free byte, and the transport's port then could
+  not allocate the few it needed to report its own exit: "Cannot handle out of
+  memory", abort, reboot. On an ESP32 without PSRAM an update took 13 to 19
+  attempts; with this, it installs first time.
+
 ## [0.1.2] - 2026-08-24
 
 ### Fixed

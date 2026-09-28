@@ -59,6 +59,12 @@
 
 -define(DEFAULT_HEARTBEAT_MS, 30000).
 
+%% How long to wait for the closed socket's transport to be gone before a
+%% download starts, and how long to then idle so its memory comes back. See
+%% close_for_download/1.
+-define(GONE_TIMEOUT_MS, 5000).
+-define(RECLAIM_MS, 200).
+
 -type config() :: #{
     url => binary() | string(),
     host => binary() | string(),
@@ -344,7 +350,7 @@ maybe_start_update(Payload, State) ->
 
     case {maps:get(updates, State, auto), Available, maps:is_key(update, State)} of
         {auto, true, false} ->
-            State1 = close(State),
+            State1 = close_for_download(State),
             Pid = nh_ota:start_update(Payload, self(), #{
                 keys => maps:get(firmware_keys, State1, [])
             }),
@@ -380,6 +386,41 @@ close(#{transport := Transport, handle := Handle} = State) ->
         channel => nh_channel:disconnected(maps:get(channel, State)),
         heartbeat_at => infinity
     }.
+
+%% The socket is closed so the download can have its memory, and on an ESP32
+%% without PSRAM it needs all of it: the download's TLS handshake takes nearly
+%% every free byte. But closing returns before that memory is back. The port is
+%% destroyed a moment later, and the port telling this process it has gone
+%% needs a few bytes of its own -- which, once the handshake has started, are
+%% not there: "Cannot handle out of memory", abort, reboot, and the server
+%% offers the update again. Seen 13 and 19 times in a row before one got
+%% through.
+%%
+%% So: wait for the transport to be gone (its 'DOWN'), then sleep briefly.
+%% Sleeping idles the scheduler, which is what lets FreeRTOS's idle task free
+%% the stack of the task the WebSocket client ran on; a task that deletes
+%% itself is only reclaimed there. A handle that is neither a port nor a pid
+%% (a test's) has nothing to wait for.
+close_for_download(#{handle := Handle} = State) ->
+    Monitor = monitor_handle(Handle),
+    State1 = close(State),
+    await_gone(Monitor),
+    timer:sleep(?RECLAIM_MS),
+    State1.
+
+monitor_handle(Handle) when is_port(Handle) -> erlang:monitor(port, Handle);
+monitor_handle(Handle) when is_pid(Handle) -> erlang:monitor(process, Handle);
+monitor_handle(_Handle) -> undefined.
+
+await_gone(undefined) ->
+    ok;
+await_gone(Monitor) ->
+    receive
+        {'DOWN', Monitor, _Type, _Object, _Reason} -> ok
+    after ?GONE_TIMEOUT_MS ->
+        erlang:demonitor(Monitor, [flush]),
+        ok
+    end.
 
 %% Joining again is left to `connected', as on any other connection.
 reopen(#{handle := undefined, transport := Transport, config := Config} = State) ->
