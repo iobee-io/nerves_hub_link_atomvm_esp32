@@ -202,7 +202,7 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
             %% library that restarts a device on its own is a library that
             %% surprises someone.
             notify(State, {update_ready, Slot}),
-            loop(reopen(maps:remove(update, State)));
+            loop(reopen(maps:remove(update, State#{armed => Slot})));
         {nh_ota, _Pid, {error, Reason}} ->
             notify(State, {update_failed, Reason}),
             loop(update_failed(describe(Reason), State));
@@ -348,7 +348,13 @@ validate_pending(State) ->
 maybe_start_update(Payload, State) ->
     Available = maps:get(<<"update_available">>, Payload, false),
 
-    case {maps:get(updates, State, auto), Available, maps:is_key(update, State)} of
+    %% Armed counts as busy until the reboot. The socket reopens once the update
+    %% is written, and NervesHub, still seeing the old firmware, offers it again.
+    %% Downloading that would write into the other slot -- which by then is the
+    %% previous firmware, the one a failed update needs to go back to.
+    Busy = maps:is_key(update, State) orelse maps:is_key(armed, State),
+
+    case {maps:get(updates, State, auto), Available, Busy} of
         {auto, true, false} ->
             State1 = close_for_download(State),
             Pid = nh_ota:start_update(Payload, self(), #{
@@ -357,8 +363,8 @@ maybe_start_update(Payload, State) ->
             notify(State1, {update_started, Pid}),
             State1#{update => Pid};
         {auto, true, true} ->
-            %% One at a time. A second `update' while a download is in flight is
-            %% the server repeating itself, not a new job.
+            %% One at a time. A second `update' while a download is in flight, or
+            %% once one is armed, is the server repeating itself, not a new job.
             State;
         _ ->
             State

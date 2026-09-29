@@ -251,6 +251,35 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
 
     nh_agent:stop(Agent).
 
+%% Once an update is written and armed, the socket reopens and NervesHub --
+%% still seeing the old firmware -- offers it again. Downloading it would
+%% write into the other slot, by then the previous firmware: the one a failed
+%% update has to go back to. Until the reboot, an armed update is busy.
+an_armed_update_is_not_downloaded_again_test() ->
+    {Agent, JoinRef} = join(#{}),
+
+    %% the download finishing, as nh_ota reports it
+    Agent ! {nh_ota, self(), {ok, <<"alt.avm">>}},
+    ?assertEqual({update_ready, <<"alt.avm">>}, next_event(1000)),
+    flush_events(),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertEqual(no_event, next_event(300)),
+
+    nh_agent:stop(Agent).
+
+flush_events() ->
+    case next_event(100) of
+        no_event -> ok;
+        _ -> flush_events()
+    end.
+
 %% `update_available => false' is NervesHub saying there is nothing to do.
 an_unavailable_update_starts_nothing_test() ->
     {Agent, JoinRef} = join(#{}),

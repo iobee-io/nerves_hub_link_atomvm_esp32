@@ -13,6 +13,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not allocate the few it needed to report its own exit: "Cannot handle out of
   memory", abort, reboot. On an ESP32 without PSRAM an update took 13 to 19
   attempts; with this, it installs first time.
+- An armed update is no longer downloaded again before the reboot. The socket
+  reopens once an update is written, and NervesHub, still seeing the old
+  firmware, offers it again; downloading it wrote into the other slot, which
+  by then holds the previous firmware -- the one a failed update goes back to.
 
 ## [0.1.2] - 2026-08-24
 
