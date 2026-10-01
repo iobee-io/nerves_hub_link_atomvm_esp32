@@ -5,6 +5,13 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `keep_open_above => Bytes` keeps the socket open while an update downloads
+  when the largest free block of heap is at least `Bytes`. The device stays
+  online, NervesHub sees the download's progress, and a failure is reported at
+  once instead of after a rejoin. Without it the socket closes as before.
+
 ### Fixed
 
 - An update's download no longer starts until the closed socket's transport is

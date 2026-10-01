@@ -171,6 +171,12 @@
 %% `{update_ready, Slot}' when it is armed. Rebooting is left to the
 %% application. `updates => manual' reports the message and does nothing else.
 %%
+%% The socket is closed while an update downloads, so an ESP32 without PSRAM
+%% has the heap for the download's TLS session. `keep_open_above => Bytes'
+%% keeps it open when the largest free block is at least `Bytes' as the
+%% download starts: the device stays online and reports progress. See
+%% `nh_agent'.
+%%
 %% == Firmware description ==
 %%
 %% `firmware' says where the running firmware's description comes from:
@@ -224,6 +230,7 @@
     register => atom(),
     handler => pid(),
     heartbeat_ms => pos_integer(),
+    keep_open_above => non_neg_integer(),
     transport => module()
 }.
 

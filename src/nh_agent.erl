@@ -41,9 +41,16 @@
 %% == Updates ==
 %%
 %% The socket is closed while an update downloads and reopened afterwards. An
-%% ESP32 without PSRAM has room for one TLS session, not two: the download's
-%% handshake leaves too little heap for the next record on either connection.
-%% A failure is reported to NervesHub once the device has joined again.
+%% ESP32 without PSRAM may have room for one TLS session, not two: the
+%% download's handshake can leave too little heap for the next record on either
+%% connection. A failure is reported to NervesHub once the device has joined
+%% again.
+%%
+%% `keep_open_above => Bytes' keeps the socket open instead when, as the
+%% download starts, the largest free block of heap is at least `Bytes' -- room
+%% for both sessions. The device then stays online, reports progress, and a
+%% failure goes back at once. A platform that does not report its heap (not an
+%% ESP32) has no such limit and always keeps it open.
 %% @end
 %%-----------------------------------------------------------------------------
 -module(nh_agent).
@@ -52,6 +59,7 @@
 
 %% Exported so a supervisor or a test can run the loop directly.
 -export([init/2, loop/1]).
+-export([keep_open/2]).
 
 %% Long enough for a frame to leave the socket, short enough that an operator
 %% does not notice.
@@ -75,7 +83,8 @@
     verify => term(),
     metadata => map(),
     handler => pid(),
-    heartbeat_ms => pos_integer()
+    heartbeat_ms => pos_integer(),
+    keep_open_above => non_neg_integer()
 }.
 
 -export_type([config/0]).
@@ -193,9 +202,8 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
             loop(push_extension(nh_ext_geo:event(), Location, State));
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(updater_down(Pid, Reason, State));
-        %% Nowhere to send progress while the socket is closed for the download.
-        {nh_ota, _Pid, {progress, _Percent}} ->
-            loop(State);
+        {nh_ota, _Pid, {progress, Percent}} ->
+            loop(progress(Percent, State));
         {nh_ota, _Pid, {ok, Slot}} ->
             %% Written and armed, not yet running. Rebooting is the
             %% application's call: it may have work to finish first, and a
@@ -356,7 +364,7 @@ maybe_start_update(Payload, State) ->
 
     case {maps:get(updates, State, auto), Available, Busy} of
         {auto, true, false} ->
-            State1 = close_for_download(State),
+            State1 = make_room_for_download(State),
             Pid = nh_ota:start_update(Payload, self(), #{
                 keys => maps:get(firmware_keys, State1, [])
             }),
@@ -392,6 +400,34 @@ close(#{transport := Transport, handle := Handle} = State) ->
         channel => nh_channel:disconnected(maps:get(channel, State)),
         heartbeat_at => infinity
     }.
+
+%% Nowhere to send progress while the socket is closed for the download.
+progress(_Percent, #{handle := undefined} = State) ->
+    State;
+progress(Percent, State) ->
+    push_event(
+        <<"update_progress">>,
+        #{<<"value">> => Percent, <<"stage">> => <<"downloading">>},
+        State
+    ).
+
+make_room_for_download(#{config := Config} = State) ->
+    case keep_open(maps:get(keep_open_above, Config, undefined), largest_free_block()) of
+        true -> State;
+        false -> close_for_download(State)
+    end.
+
+%% @private Exported for tests: a host has no ESP32 heap to measure.
+keep_open(undefined, _Largest) -> false;
+keep_open(_Min, undefined) -> true;
+keep_open(Min, Largest) -> Largest >= Min.
+
+largest_free_block() ->
+    try
+        erlang:system_info(esp32_largest_free_block)
+    catch
+        _:_ -> undefined
+    end.
 
 %% The socket is closed so the download can have its memory, and on an ESP32
 %% without PSRAM it needs all of it: the download's TLS handshake takes nearly
@@ -440,19 +476,20 @@ reopen(#{handle := undefined, transport := Transport, config := Config} = State)
 reopen(State) ->
     State.
 
+%% Reported now if the socket stayed open and joined; otherwise on the next join.
 update_failed(Reason, State) ->
-    reopen(maps:remove(update, State#{failure => Reason})).
+    report_failure(reopen(maps:remove(update, State#{failure => Reason}))).
 
 report_failure(State) ->
     %% Not `maps:take/2': AtomVM does not have it.
-    case maps:find(failure, State) of
-        {ok, Reason} ->
+    case {maps:find(failure, State), nh_channel:joined(maps:get(channel, State))} of
+        {{ok, Reason}, true} ->
             push_event(
                 <<"status_update">>,
                 #{<<"status">> => <<"failed">>, <<"reason">> => Reason},
                 maps:remove(failure, State)
             );
-        error ->
+        _ ->
             State
     end.
 

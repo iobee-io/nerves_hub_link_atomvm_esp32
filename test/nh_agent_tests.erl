@@ -251,6 +251,42 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
 
     nh_agent:stop(Agent).
 
+%% With room for two TLS sessions the socket stays open: progress goes out as
+%% the download runs, and a failure is reported at once, not after a rejoin.
+%% Off a device there is no heap to measure, so any threshold keeps it open.
+a_socket_kept_open_reports_progress_and_failure_at_once_test() ->
+    {Agent, JoinRef} = join(#{keep_open_above => 60000}),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({update_started, _Pid}, next_event(1000)),
+
+    Agent ! {nh_ota, self(), {progress, 42}},
+    Progress = wait_for_event(<<"update_progress">>, 1000),
+    ?assertEqual(42, maps:get(<<"value">>, Progress)),
+
+    ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
+    Reported = wait_for_event(<<"status_update">>, 1000),
+    ?assertEqual(<<"no_flash_access">>, maps:get(<<"reason">>, Reported)),
+
+    receive
+        closed -> erlang:error(closed)
+    after 0 -> ok
+    end,
+
+    nh_agent:stop(Agent).
+
+keep_open_needs_a_threshold_and_a_block_that_large_test() ->
+    ?assertNot(nh_agent:keep_open(undefined, 100000)),
+    ?assert(nh_agent:keep_open(60000, undefined)),
+    ?assert(nh_agent:keep_open(60000, 60000)),
+    ?assertNot(nh_agent:keep_open(60000, 59999)).
+
 %% Once an update is written and armed, the socket reopens and NervesHub --
 %% still seeing the old firmware -- offers it again. Downloading it would
 %% write into the other slot, by then the previous firmware: the one a failed
