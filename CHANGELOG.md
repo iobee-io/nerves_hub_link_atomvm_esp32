@@ -7,6 +7,9 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `before_update => Fun` runs before an update's download starts, so the
+  application can free memory first (its own TLS connections, say). It hears
+  `update_failed` if the update does not happen.
 - `console_commands => [{Name, Description, Fun}]` adds the application's own
   commands to the remote console. `Fun` gets the line's arguments and returns
   the output; `help` lists them, and one that raises prints the error.

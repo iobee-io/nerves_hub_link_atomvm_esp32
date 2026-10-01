@@ -284,6 +284,31 @@ a_socket_kept_open_reports_progress_and_failure_at_once_test() ->
 
     nh_agent:stop(Agent).
 
+%% The application frees its memory before the download starts.
+before_update_runs_before_the_download_test() ->
+    Self = self(),
+    {Agent, JoinRef} = join(#{
+        before_update => fun() ->
+            Self ! before_update,
+            ok
+        end
+    }),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    receive
+        before_update -> ok
+    after 1000 -> erlang:error(no_before_update)
+    end,
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({update_started, _Pid}, next_event(1000)),
+
+    nh_agent:stop(Agent).
+
 keep_open_needs_a_threshold_and_a_block_that_large_test() ->
     ?assertNot(nh_agent:keep_open(undefined, 100000)),
     ?assert(nh_agent:keep_open(60000, undefined)),

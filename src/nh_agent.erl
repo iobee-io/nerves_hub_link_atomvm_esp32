@@ -50,7 +50,11 @@
 %% download starts, the largest free block of heap is at least `Bytes' -- room
 %% for both sessions. The device then stays online, reports progress, and a
 %% failure goes back at once; then it reconnects, since NervesHub only offers
-%% an update again on a join. A platform that does not report its heap (not an
+%% an update again on a join.
+%%
+%% `before_update => Fun' is called before any of this, so the application can
+%% free memory first (its own TLS connections, say); it hears `update_failed'
+%% if the update does not happen. A platform that does not report its heap (not an
 %% ESP32) has no such limit and always keeps it open.
 %% @end
 %%-----------------------------------------------------------------------------
@@ -89,7 +93,8 @@
     metadata => map(),
     handler => pid(),
     heartbeat_ms => pos_integer(),
-    keep_open_above => non_neg_integer()
+    keep_open_above => non_neg_integer(),
+    before_update => fun(() -> ok)
 }.
 
 -export_type([config/0]).
@@ -371,6 +376,7 @@ maybe_start_update(Payload, State) ->
 
     case {maps:get(updates, State, auto), Available, Busy} of
         {auto, true, false} ->
+            ok = before_update(State),
             State1 = make_room_for_download(State),
             Pid = nh_ota:start_update(Payload, self(), #{
                 keys => maps:get(firmware_keys, State1, [])
@@ -417,6 +423,14 @@ progress(Percent, State) ->
         #{<<"value">> => Percent, <<"stage">> => <<"downloading">>},
         State
     ).
+
+%% The application's chance to free memory for the download (stop its own TLS
+%% connections, say) before the heap is measured and the download starts. It
+%% hears `update_failed' if the update does not happen, to start them again.
+before_update(#{config := #{before_update := Fun}}) ->
+    ok = Fun();
+before_update(_State) ->
+    ok.
 
 make_room_for_download(#{config := Config} = State) ->
     case keep_open(maps:get(keep_open_above, Config, undefined), largest_free_block()) of

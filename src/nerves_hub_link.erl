@@ -178,7 +178,8 @@
 %% has the heap for the download's TLS session. `keep_open_above => Bytes'
 %% keeps it open when the largest free block is at least `Bytes' as the
 %% download starts: the device stays online and reports progress. See
-%% `nh_agent'.
+%% `nh_agent'. `before_update => Fun' runs first, to free memory for the
+%% download (the application's own TLS connections, say).
 %%
 %% == Firmware description ==
 %%
@@ -235,6 +236,7 @@
     handler => pid(),
     heartbeat_ms => pos_integer(),
     keep_open_above => non_neg_integer(),
+    before_update => fun(() -> ok),
     transport => module()
 }.
 
