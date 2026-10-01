@@ -81,6 +81,8 @@
 %% How long a failure's report gets to leave before the socket that stayed
 %% open reconnects, so that NervesHub offers the update again.
 -define(REJOIN_MS, 1000).
+%% Console output goes up in pieces of at most this many bytes (`nh_console:chunks/2`).
+-define(CONSOLE_CHUNK, 256).
 
 -type config() :: #{
     url => binary() | string(),
@@ -523,14 +525,20 @@ report_failure(State) ->
     end.
 
 %% Console output only goes anywhere if the channel joined, and `push/4'
-%% already refuses on a topic that has not.
+%% already refuses on a topic that has not. In pieces: see `nh_console:chunks/2'.
 console_out(<<>>, State) ->
     State;
 console_out(Output, State) ->
-    {Channel, Actions} = nh_channel:push(
-        <<"console">>, <<"up">>, #{<<"data">> => Output}, maps:get(channel, State)
-    ),
-    run(Actions, State#{channel => Channel}).
+    lists:foldl(
+        fun(Chunk, Acc) ->
+            {Channel, Actions} = nh_channel:push(
+                <<"console">>, <<"up">>, #{<<"data">> => Chunk}, maps:get(channel, Acc)
+            ),
+            run(Actions, Acc#{channel => Channel})
+        end,
+        State,
+        nh_console:chunks(Output, ?CONSOLE_CHUNK)
+    ).
 
 %% `rebooting' has to reach NervesHub before the device goes. A send returns
 %% once the frame is handed to the socket, not once it leaves, and `esp:restart/0'

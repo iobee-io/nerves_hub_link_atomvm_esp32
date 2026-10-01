@@ -27,6 +27,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Console output goes up in pieces of at most 256 bytes. Each `up` is
+  JSON-encoded in the agent, which on AtomVM costs the process many times the
+  output's size in heap: a 2 KB answer with quotes in it took more than an
+  ESP32 without PSRAM had in one block, and the device panicked.
 - An update's download no longer starts until the closed socket's transport is
   gone and its memory is back. Closing returned first, the download's TLS
   handshake took nearly every free byte, and the transport's port then could
