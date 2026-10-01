@@ -252,7 +252,7 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
     nh_agent:stop(Agent).
 
 %% With room for two TLS sessions the socket stays open: progress goes out as
-%% the download runs, and a failure is reported at once, not after a rejoin.
+%% the download runs, and a failure is reported at once, then it reconnects.
 %% Off a device there is no heap to measure, so any threshold keeps it open.
 a_socket_kept_open_reports_progress_and_failure_at_once_test() ->
     {Agent, JoinRef} = join(#{keep_open_above => 60000}),
@@ -274,10 +274,13 @@ a_socket_kept_open_reports_progress_and_failure_at_once_test() ->
     Reported = wait_for_event(<<"status_update">>, 1000),
     ?assertEqual(<<"no_flash_access">>, maps:get(<<"reason">>, Reported)),
 
+    %% The socket was open throughout; only then does it reconnect, so that
+    %% NervesHub offers the update again on the join.
     receive
-        closed -> erlang:error(closed)
-    after 0 -> ok
+        closed -> ok
+    after 3000 -> erlang:error(never_rejoined)
     end,
+    _ = next_opened(),
 
     nh_agent:stop(Agent).
 

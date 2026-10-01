@@ -49,7 +49,8 @@
 %% `keep_open_above => Bytes' keeps the socket open instead when, as the
 %% download starts, the largest free block of heap is at least `Bytes' -- room
 %% for both sessions. The device then stays online, reports progress, and a
-%% failure goes back at once. A platform that does not report its heap (not an
+%% failure goes back at once; then it reconnects, since NervesHub only offers
+%% an update again on a join. A platform that does not report its heap (not an
 %% ESP32) has no such limit and always keeps it open.
 %% @end
 %%-----------------------------------------------------------------------------
@@ -72,6 +73,10 @@
 %% close_for_download/1.
 -define(GONE_TIMEOUT_MS, 5000).
 -define(RECLAIM_MS, 200).
+
+%% How long a failure's report gets to leave before the socket that stayed
+%% open reconnects, so that NervesHub offers the update again.
+-define(REJOIN_MS, 1000).
 
 -type config() :: #{
     url => binary() | string(),
@@ -219,6 +224,8 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
         {push, Event, Payload} ->
             {Channel, Actions} = nh_channel:push(Event, Payload, maps:get(channel, State)),
             loop(run(Actions, State#{channel => Channel}));
+        rejoin ->
+            loop(reopen(close_for_download(State)));
         stop ->
             _ = close(State),
             ok;
@@ -477,8 +484,16 @@ reopen(State) ->
     State.
 
 %% Reported now if the socket stayed open and joined; otherwise on the next join.
+%%
+%% NervesHub offers an update again only when the device joins again. With
+%% the socket closed for the download, reopening it is that join; with it kept
+%% open, nothing would ever ask again, so it reconnects once the report has
+%% had time to leave.
+update_failed(Reason, #{handle := undefined} = State) ->
+    report_failure(reopen(maps:remove(update, State#{failure => Reason})));
 update_failed(Reason, State) ->
-    report_failure(reopen(maps:remove(update, State#{failure => Reason}))).
+    erlang:send_after(?REJOIN_MS, self(), rejoin),
+    report_failure(maps:remove(update, State#{failure => Reason})).
 
 report_failure(State) ->
     %% Not `maps:take/2': AtomVM does not have it.
