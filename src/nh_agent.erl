@@ -154,7 +154,7 @@ init(Config, Owner) ->
                 firmware_keys => stash_keys(maps:get(firmware_keys, Config, [])),
                 reboot => maps:get(reboot, Config, auto),
                 channel => Channel,
-                console => nh_console:new(),
+                console => nh_console:new(maps:get(console_commands, Config, [])),
                 extensions => Extensions,
                 heartbeat_ms => HeartbeatMs,
                 %% No heartbeats until the socket is up.

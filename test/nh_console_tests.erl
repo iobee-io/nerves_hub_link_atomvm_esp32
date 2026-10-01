@@ -130,3 +130,22 @@ parse_splits_a_command_from_its_arguments_test() ->
     ?assertEqual({<<"a">>, [<<"b">>]}, nh_console:parse(<<"   a    b   ">>)),
     ?assertEqual(empty, nh_console:parse(<<"">>)),
     ?assertEqual(empty, nh_console:parse(<<"   \r\n">>)).
+
+%% An application's commands run with the line's arguments, show up in `help',
+%% and one that raises prints the error rather than taking the console down.
+application_commands_test() ->
+    Commands = [
+        {<<"echo">>, <<"say it back">>, fun(Args) -> [lists:join(<<"|">>, Args), <<"\r\n">>] end},
+        {<<"boom">>, <<"raise">>, fun(_Args) -> error(kaboom) end}
+    ],
+    State = nh_console:new(Commands),
+    {State1, Echo} = nh_console:handle_input(<<"echo a b\r">>, State),
+    ?assertMatch({_, _}, binary:match(Echo, <<"a|b">>)),
+    {State2, Help} = nh_console:handle_input(<<"help\r">>, State1),
+    ?assertMatch({_, _}, binary:match(Help, <<"say it back">>)),
+    ?assertMatch({_, _}, binary:match(Help, <<"uptime">>)),
+    {State3, Boom} = nh_console:handle_input(<<"boom\r">>, State2),
+    ?assertMatch({_, _}, binary:match(Boom, <<"kaboom">>)),
+    {State4, _} = nh_console:restart(State3),
+    {_, Again} = nh_console:handle_input(<<"echo c\r">>, State4),
+    ?assertMatch({_, _}, binary:match(Again, <<"c">>)).

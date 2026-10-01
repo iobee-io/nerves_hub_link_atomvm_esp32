@@ -76,6 +76,9 @@
 %% has no shell, so this answers it with a debug terminal instead — a fixed set
 %% of commands, listed by `help'. See `nh_console'.
 %%
+%% `console_commands' adds the application's own, as `{Name, Description,
+%% Fun}': `Fun' gets the line's arguments and returns the output.
+%%
 %% It reports, and it reboots. It will not evaluate Erlang, and it is not a way
 %% in to a running system.
 %%
@@ -221,6 +224,7 @@
     client_cert => {binary(), binary()},
     verify => crt_bundle | {cacert_pem, binary()} | none,
     console => boolean(),
+    console_commands => [nh_console:command()],
     extensions => all | [health | geo | logging],
     reboot => auto | manual,
     updates => auto | manual,

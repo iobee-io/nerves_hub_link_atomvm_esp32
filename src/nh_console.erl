@@ -29,13 +29,19 @@
 %% broken. `restart' clears the session the way it restarts IEx on Nerves —
 %% it does not restart the device, which is what `reboot' is for.
 %%
+%% An application can add commands of its own (`console_commands' in
+%% `nerves_hub_link''s config): `{Name, Description, Fun}', where `Fun' takes
+%% the line's arguments and returns the output. They run in the agent, so they
+%% must be quick, and one that raises prints the error instead of taking the
+%% console down. `help' lists them after the built-in ones.
+%%
 %% File transfer is declined. `file-data/*' exists to push a file onto a device
 %% with a filesystem to put it in, and this one has partitions.
 %% @end
 %%-----------------------------------------------------------------------------
 -module(nh_console).
 
--export([new/0, banner/0, prompt/0, handle_input/2, restart/1, parse/1, commands/0]).
+-export([new/0, new/1, banner/0, prompt/0, handle_input/2, restart/1, parse/1, commands/0]).
 
 %% Terminals want CRLF, and NervesHub replays exactly what it is sent.
 -define(EOL, <<"\r\n">>).
@@ -47,16 +53,28 @@
 -define(DELETE, 127).
 -define(ESC, 27).
 
--type state() :: #{line := binary(), mode := input | escape | escape_bracket}.
+-type command() :: {binary(), binary(), fun(([binary()]) -> iodata())}.
+-type state() :: #{
+    line := binary(),
+    mode := input | escape | escape_bracket,
+    commands := [command()]
+}.
 
--export_type([state/0]).
+-export_type([state/0, command/0]).
 
 %%-----------------------------------------------------------------------------
 %% @doc A console session with nothing typed.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec new() -> state().
-new() -> #{line => <<>>, mode => input}.
+new() -> new([]).
+
+%%-----------------------------------------------------------------------------
+%% @doc A console session with the application's own commands as well.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec new([command()]) -> state().
+new(Commands) -> #{line => <<>>, mode => input, commands => Commands}.
 
 %%-----------------------------------------------------------------------------
 %% @doc What to send when someone first attaches.
@@ -82,8 +100,11 @@ prompt() -> ?PROMPT.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec restart(state()) -> {state(), binary()}.
-restart(_State) ->
-    {new(), <<(?EOL)/binary, "*** Console restarted ***", (?EOL)/binary, (?PROMPT)/binary>>}.
+restart(#{commands := Commands}) ->
+    {
+        new(Commands),
+        <<(?EOL)/binary, "*** Console restarted ***", (?EOL)/binary, (?PROMPT)/binary>>
+    }.
 
 %%-----------------------------------------------------------------------------
 %% @doc Feed keystrokes in, get terminal output back.
@@ -139,8 +160,8 @@ fold_input(<<Byte, Rest/binary>>, #{line := Line} = State, Acc) when Byte >= 32,
 fold_input(<<_Byte, Rest/binary>>, State, Acc) ->
     fold_input(Rest, State, Acc).
 
-submit(Rest, #{line := Line} = State, Acc) ->
-    Output = <<(?EOL)/binary, (run(Line))/binary, (?PROMPT)/binary>>,
+submit(Rest, #{line := Line, commands := Commands} = State, Acc) ->
+    Output = <<(?EOL)/binary, (run(Line, Commands))/binary, (?PROMPT)/binary>>,
     fold_input(Rest, State#{line => <<>>}, [Output | Acc]).
 
 %%-----------------------------------------------------------------------------
@@ -191,18 +212,31 @@ commands() ->
         {<<"reboot">>, <<"restart the device">>}
     ].
 
-run(Line) ->
+run(Line, Commands) ->
     case parse(Line) of
         empty -> <<>>;
-        {Command, Args} -> execute(Command, Args)
+        {<<"help">>, _Args} -> help(Commands);
+        {Command, Args} -> execute(lists:keyfind(Command, 1, Commands), Command, Args)
     end.
 
-execute(<<"help">>, _Args) ->
-    Rows = [
+help(Commands) ->
+    All = commands() ++ [{Name, Description} || {Name, Description, _Fun} <- Commands],
+    iolist_to_binary([
         <<"  ", (pad(Name, 12))/binary, Description/binary, (?EOL)/binary>>
-     || {Name, Description} <- commands()
-    ],
-    iolist_to_binary([Rows]);
+     || {Name, Description} <- All
+    ]).
+
+%% The application's, or else a built-in one.
+execute({_Name, _Description, Fun}, _Command, Args) ->
+    try
+        iolist_to_binary(Fun(Args))
+    catch
+        Class:Reason ->
+            iolist_to_binary(io_lib:format("~p: ~p~ts", [Class, Reason, ?EOL]))
+    end;
+execute(false, Command, Args) ->
+    execute(Command, Args).
+
 execute(<<"info">>, _Args) ->
     lines([
         {<<"atomvm">>, nh_metadata:atomvm_version()},
