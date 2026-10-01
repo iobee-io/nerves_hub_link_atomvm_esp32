@@ -13,6 +13,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `console_commands => [{Name, Description, Fun}]` adds the application's own
   commands to the remote console. `Fun` gets the line's arguments and returns
   the output; `help` lists them, and one that raises prints the error.
+  `{Section, Name, Description, Fun}` puts one in a section of `help`.
+
+### Changed
+
+- `help` lists the commands by section: the built-in ones in `device` and
+  `network`, an application's in the section it names (`application` if none).
 - `keep_open_above => Bytes` keeps the socket open while an update downloads
   when the largest free block of heap is at least `Bytes`. The device stays
   online, NervesHub sees the download's progress, and a failure is reported at

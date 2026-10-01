@@ -77,7 +77,8 @@
 %% of commands, listed by `help'. See `nh_console'.
 %%
 %% `console_commands' adds the application's own, as `{Name, Description,
-%% Fun}': `Fun' gets the line's arguments and returns the output.
+%% Fun}', or `{Section, Name, Description, Fun}' to list it under a section of
+%% `help': `Fun' gets the line's arguments and returns the output.
 %%
 %% It reports, and it reboots. It will not evaluate Erlang, and it is not a way
 %% in to a running system.

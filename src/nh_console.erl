@@ -33,7 +33,12 @@
 %% `nerves_hub_link''s config): `{Name, Description, Fun}', where `Fun' takes
 %% the line's arguments and returns the output. They run in the agent, so they
 %% must be quick, and one that raises prints the error instead of taking the
-%% console down. `help' lists them after the built-in ones.
+%% console down.
+%%
+%% `help' lists the commands by section: the built-in ones are in `device' and
+%% `network'. `{Section, Name, Description, Fun}' puts an application's command
+%% in a section, one of those or its own; without one it goes in
+%% `application'. Sections come in the order they first appear.
 %%
 %% File transfer is declined. `file-data/*' exists to push a file onto a device
 %% with a filesystem to put it in, and this one has partitions.
@@ -53,7 +58,9 @@
 -define(DELETE, 127).
 -define(ESC, 27).
 
--type command() :: {binary(), binary(), fun(([binary()]) -> iodata())}.
+-type command() ::
+    {binary(), binary(), fun(([binary()]) -> iodata())}
+    | {binary(), binary(), binary(), fun(([binary()]) -> iodata())}.
 -type state() :: #{
     line := binary(),
     mode := input | escape | escape_bracket,
@@ -74,7 +81,11 @@ new() -> new([]).
 %% @end
 %%-----------------------------------------------------------------------------
 -spec new([command()]) -> state().
-new(Commands) -> #{line => <<>>, mode => input, commands => Commands}.
+new(Commands) ->
+    #{line => <<>>, mode => input, commands => [sectioned(Command) || Command <- Commands]}.
+
+sectioned({Name, Description, Fun}) -> {<<"application">>, Name, Description, Fun};
+sectioned({_Section, _Name, _Description, _Fun} = Command) -> Command.
 
 %%-----------------------------------------------------------------------------
 %% @doc What to send when someone first attaches.
@@ -100,9 +111,9 @@ prompt() -> ?PROMPT.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec restart(state()) -> {state(), binary()}.
-restart(#{commands := Commands}) ->
+restart(State) ->
     {
-        new(Commands),
+        State#{line => <<>>, mode => input},
         <<(?EOL)/binary, "*** Console restarted ***", (?EOL)/binary, (?PROMPT)/binary>>
     }.
 
@@ -199,35 +210,60 @@ trim_trailing(Line) ->
 %%-----------------------------------------------------------------------------
 -spec commands() -> [{binary(), binary()}].
 commands() ->
+    [{<<"help">>, <<"this list">>}] ++
+        [{Name, Description} || {_Section, Name, Description} <- built_in()].
+
+%% The built-in commands, by section.
+built_in() ->
     [
-        {<<"help">>, <<"this list">>},
-        {<<"info">>, <<"AtomVM and application versions">>},
-        {<<"firmware">>, <<"the running packbeam, its digest and slot">>},
-        {<<"memory">>, <<"heap and process counts">>},
-        {<<"partitions">>, <<"the flash partition table">>},
-        {<<"net">>, <<"network address and signal">>},
-        {<<"geo">>, <<"resolve this device's location over GeoIP">>},
-        {<<"signature">>, <<"check the running firmware's signature">>},
-        {<<"uptime">>, <<"how long since boot">>},
-        {<<"reboot">>, <<"restart the device">>}
+        {<<"device">>, <<"info">>, <<"AtomVM and application versions">>},
+        {<<"device">>, <<"firmware">>, <<"the running packbeam, its digest and slot">>},
+        {<<"device">>, <<"signature">>, <<"check the running firmware's signature">>},
+        {<<"device">>, <<"memory">>, <<"heap and process counts">>},
+        {<<"device">>, <<"partitions">>, <<"the flash partition table">>},
+        {<<"device">>, <<"uptime">>, <<"how long since boot">>},
+        {<<"device">>, <<"reboot">>, <<"restart the device">>},
+        {<<"network">>, <<"net">>, <<"network address and signal">>},
+        {<<"network">>, <<"geo">>, <<"resolve this device's location over GeoIP">>}
     ].
 
 run(Line, Commands) ->
     case parse(Line) of
         empty -> <<>>;
         {<<"help">>, _Args} -> help(Commands);
-        {Command, Args} -> execute(lists:keyfind(Command, 1, Commands), Command, Args)
+        {Command, Args} -> execute(lists:keyfind(Command, 2, Commands), Command, Args)
     end.
 
 help(Commands) ->
-    All = commands() ++ [{Name, Description} || {Name, Description, _Fun} <- Commands],
-    iolist_to_binary([
-        <<"  ", (pad(Name, 12))/binary, Description/binary, (?EOL)/binary>>
-     || {Name, Description} <- All
-    ]).
+    All =
+        built_in() ++
+            [{Section, Name, Description} || {Section, Name, Description, _Fun} <- Commands],
+    Sections = lists:foldl(
+        fun({Section, _, _}, Seen) ->
+            case lists:member(Section, Seen) of
+                true -> Seen;
+                false -> Seen ++ [Section]
+            end
+        end,
+        [],
+        All
+    ),
+    iolist_to_binary(
+        [
+            [
+                [Section, ?EOL],
+                [
+                    <<"  ", (pad(Name, 12))/binary, Description/binary, (?EOL)/binary>>
+                 || {In, Name, Description} <- All, In =:= Section
+                ],
+                ?EOL
+            ]
+         || Section <- Sections
+        ] ++ [<<"help lists this; `COMMAND help` explains one, where it has more">>, ?EOL]
+    ).
 
 %% The application's, or else a built-in one.
-execute({_Name, _Description, Fun}, _Command, Args) ->
+execute({_Section, _Name, _Description, Fun}, _Command, Args) ->
     try
         iolist_to_binary(Fun(Args))
     catch

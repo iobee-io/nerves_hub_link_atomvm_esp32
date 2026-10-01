@@ -149,3 +149,30 @@ application_commands_test() ->
     {State4, _} = nh_console:restart(State3),
     {_, Again} = nh_console:handle_input(<<"echo c\r">>, State4),
     ?assertMatch({_, _}, binary:match(Again, <<"c">>)).
+
+%% `help' groups by section: the built-in ones, an application's command in one
+%% of those or its own, and the rest under `application', in order of first
+%% appearance.
+help_groups_by_section_test() ->
+    Noop = fun(_Args) -> <<>> end,
+    State = nh_console:new([
+        {<<"plain">>, <<"no section">>, Noop},
+        {<<"network">>, <<"ping">>, <<"reach a host">>, Noop},
+        {<<"storage">>, <<"fs">>, <<"files">>, Noop}
+    ]),
+    {_, Help} = nh_console:handle_input(<<"help\r">>, State),
+    Order = [
+        <<"device\r\n">>,
+        <<"uptime">>,
+        <<"network\r\n">>,
+        <<"geo">>,
+        <<"ping">>,
+        <<"application\r\n">>,
+        <<"plain">>,
+        <<"storage\r\n">>,
+        <<"fs ">>
+    ],
+    Positions = [element(1, binary:match(Help, Part)) || Part <- Order],
+    ?assertEqual(lists:sort(Positions), Positions),
+    {_, Ping} = nh_console:handle_input(<<"ping\r">>, State),
+    ?assertEqual(nomatch, binary:match(Ping, <<"unknown">>)).
