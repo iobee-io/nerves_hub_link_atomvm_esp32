@@ -504,8 +504,11 @@ window_size_is_accepted_quietly_test() ->
 
 %% Joins device + extensions, answering both. Returns the extensions join ref.
 join_with_extensions(Enabled, AttachList) ->
+    join_with_extensions(Enabled, AttachList, #{}).
+
+join_with_extensions(Enabled, AttachList, Extra) ->
     setup(),
-    {ok, Agent} = nh_agent:start(config(#{extensions => Enabled})),
+    {ok, Agent} = nh_agent:start(config(Extra#{extensions => Enabled})),
     _ = next_opened(),
     Agent ! {websocket, fake_handle, connected},
 
@@ -571,6 +574,21 @@ a_health_check_is_answered_with_a_report_test() ->
     ?assert(maps:is_key(<<"metrics">>, maps:get(<<"value">>, Payload))),
 
     nh_agent:stop(Agent).
+
+%% The application's alarms ride on the report; a callback that fails costs
+%% the alarms, not the report.
+a_report_carries_the_applications_alarms_test() ->
+    Alarms = #{<<"LowMemory">> => <<"largest free block 20000 bytes">>},
+    lists:foreach(
+        fun({Fun, Expected}) ->
+            {Agent, Ref, _} = join_with_extensions([health], [<<"health">>], #{alarms => Fun}),
+            send_extension(Agent, Ref, <<"health:check">>, #{}),
+            Payload = wait_for_event(<<"health:report">>, 2000),
+            ?assertEqual(Expected, maps:get(<<"alarms">>, maps:get(<<"value">>, Payload))),
+            nh_agent:stop(Agent)
+        end,
+        [{fun() -> Alarms end, Alarms}, {fun() -> error(boom) end, #{}}, {fun() -> nope end, #{}}]
+    ).
 
 %% The platform asking for something it never turned on is not answered.
 a_check_for_a_detached_extension_is_ignored_test() ->

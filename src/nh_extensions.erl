@@ -42,7 +42,12 @@
 %% wire format, so these track `nerves_hub_link' rather than this library.
 -define(VERSION, <<"0.0.1">>).
 
--type state() :: #{enabled := [binary()], attached := [binary()]}.
+-type state() :: #{
+    enabled := [binary()],
+    attached := [binary()],
+    %% Whatever the application returns: checked on each report.
+    alarms := undefined | fun(() -> term())
+}.
 
 -export_type([state/0]).
 
@@ -51,6 +56,10 @@
 %%
 %% `extensions => [health, geo, logging]', or `all'. Nothing is enabled by
 %% default: each one costs traffic a device may not want to spend.
+%%
+%% `alarms => Fun' gives the health report the application's alarms: called
+%% for each report, it returns the complete set raised right now,
+%% `#{Name => Description}'.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec new(map()) -> state().
@@ -62,7 +71,11 @@ new(Config) ->
             _ -> []
         end,
 
-    #{enabled => [E || E <- Enabled, E =/= undefined], attached => []}.
+    #{
+        enabled => [E || E <- Enabled, E =/= undefined],
+        attached => [],
+        alarms => maps:get(alarms, Config, undefined)
+    }.
 
 normalise(health) -> ?HEALTH;
 normalise(geo) -> ?GEO;
@@ -144,10 +157,23 @@ handle_event(Scoped, Payload, State) ->
     end.
 
 dispatch(?HEALTH, <<"check">>, _Payload, State) ->
-    {State, [{push, <<"health:report">>, #{<<"value">> => nh_ext_health:report()}}]};
+    Report = nh_ext_health:report(alarms(State)),
+    {State, [{push, <<"health:report">>, #{<<"value">> => Report}}]};
 dispatch(?GEO, <<"location:request">>, _Payload, State) ->
     %% Resolving means an HTTP request, which does not belong on the process
     %% that has heartbeats to send.
     {State, [{resolve_location}]};
 dispatch(Name, Event, _Payload, State) ->
     {State, [{unhandled_extension_event, Name, Event}]}.
+
+%% A report is what you ask for when something is wrong, so an application
+%% callback that fails costs the alarms, not the report.
+alarms(#{alarms := Fun}) when is_function(Fun, 0) ->
+    try Fun() of
+        Alarms when is_map(Alarms) -> Alarms;
+        _Other -> #{}
+    catch
+        _:_ -> #{}
+    end;
+alarms(_State) ->
+    #{}.

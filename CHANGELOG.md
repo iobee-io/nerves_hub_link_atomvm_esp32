@@ -7,6 +7,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `alarms => Fun` puts the application's alarms on the health report: called
+  for each report, it returns the complete set raised right now,
+  `#{Name => Description}`. A callback that fails or returns something else
+  costs the alarms, not the report.
 - `before_update => Fun` runs before an update's download starts, so the
   application can free memory first (its own TLS connections, say). It hears
   `update_failed` if the update does not happen.

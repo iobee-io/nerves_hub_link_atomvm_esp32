@@ -228,6 +228,7 @@
     console => boolean(),
     console_commands => [nh_console:command()],
     extensions => all | [health | geo | logging],
+    alarms => fun(() -> #{binary() => binary()}),
     reboot => auto | manual,
     updates => auto | manual,
     firmware_keys => [binary() | string()],
