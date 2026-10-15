@@ -237,6 +237,7 @@
     register => atom(),
     handler => pid(),
     heartbeat_ms => pos_integer(),
+    ping_interval_ms => pos_integer(),
     keep_open_above => non_neg_integer(),
     before_update => fun(() -> ok),
     transport => module()

@@ -197,6 +197,7 @@ connecting or every signature is decades stale. `start/1` refuses with
 | `register` | none | Register the agent under a name |
 | `handler` | the caller | Where `{nerves_hub, Event}` goes |
 | `heartbeat_ms` | 30000 | |
+| `ping_interval_ms` | the transport's | WebSocket pings; the IDF's are every 10 s |
 | `transport` | `websocket_client` | |
 
 ## Updates

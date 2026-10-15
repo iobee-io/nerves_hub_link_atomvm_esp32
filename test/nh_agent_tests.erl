@@ -77,6 +77,23 @@ joins_only_once_connected_test() ->
 
     nh_agent:stop(Agent).
 
+%% Pings are the transport's business; the agent only passes the interval on.
+passes_the_ping_interval_to_the_transport_test() ->
+    setup(),
+    {ok, Default} = nh_agent:start(config(#{})),
+    receive
+        {opened, _, Plain} -> ?assertNot(maps:is_key(ping_interval_ms, Plain))
+    after 1000 -> ?assert(false)
+    end,
+    nh_agent:stop(Default),
+
+    {ok, Agent} = nh_agent:start(config(#{ping_interval_ms => 60000})),
+    receive
+        {opened, _, Config} -> ?assertEqual(60000, maps:get(ping_interval_ms, Config))
+    after 1000 -> ?assert(false)
+    end,
+    nh_agent:stop(Agent).
+
 %% The whole reason the agent watches for `connected' rather than joining once:
 %% a Phoenix channel does not survive a socket reconnect.
 rejoins_on_every_connection_test() ->
