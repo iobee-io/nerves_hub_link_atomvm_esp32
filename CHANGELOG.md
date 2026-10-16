@@ -7,6 +7,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The `alarms` extension (0.1.0): with `extensions => [alarms]` and an
+  `alarms => Fun`, the agent asks for the alarms every `alarms_interval_ms`
+  (30 s by default) and sends `alarms:raised` / `alarms:cleared` as they
+  change, and `alarms:snapshot` when NervesHub sends `alarms:sync`. Alarms
+  raised while offline keep the time they were raised. With it attached, the
+  health report leaves the `alarms` key out. A `Fun` of one argument is given
+  the set it returned last time, for hysteresis without state of its own; a
+  callback that fails leaves what was raised as it was.
 - `ping_interval_ms => Ms` sets how often the socket sends WebSocket pings.
   ESP-IDF's default is every 10 seconds, which on a metered link (a cellular
   modem, say) costs more than the heartbeats; NervesHub needs only the

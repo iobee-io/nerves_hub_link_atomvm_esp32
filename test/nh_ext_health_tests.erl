@@ -20,6 +20,10 @@ report_carries_the_alarms_given_test() ->
     ?assertEqual(Alarms, maps:get(<<"alarms">>, nh_ext_health:report(Alarms))),
     ?assertEqual(#{}, maps:get(<<"alarms">>, nh_ext_health:report())).
 
+%% With the alarms extension the report says nothing about alarms.
+report_without_alarms_leaves_the_key_out_test() ->
+    ?assertNot(maps:is_key(<<"alarms">>, nh_ext_health:report(undefined))).
+
 %% Every metric drives a graph, so they have to be numbers.
 metrics_are_numbers_test() ->
     lists:foreach(

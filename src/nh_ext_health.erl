@@ -47,17 +47,23 @@ report() ->
 %% `#{Name => Description}', both binaries: the complete set raised right now.
 %% NervesHub diffs it against what it has stored, so an alarm missing from a
 %% report is an alarm cleared.
+%%
+%% `undefined' leaves the key out, which NervesHub reads as "nothing to say":
+%% the report of a device sending its alarms through the `alarms' extension.
 %% @end
 %%-----------------------------------------------------------------------------
--spec report(map()) -> map().
+-spec report(map() | undefined) -> map().
 report(Alarms) ->
-    #{
+    Report = #{
         <<"timestamp">> => timestamp(),
         <<"metadata">> => metadata(),
-        <<"alarms">> => Alarms,
         <<"metrics">> => metrics(),
         <<"checks">> => #{}
-    }.
+    },
+    case Alarms of
+        undefined -> Report;
+        _ -> Report#{<<"alarms">> => Alarms}
+    end.
 
 %%-----------------------------------------------------------------------------
 %% @doc Numbers that change, and are worth a graph.

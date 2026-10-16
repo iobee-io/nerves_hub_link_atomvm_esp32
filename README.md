@@ -270,8 +270,33 @@ to a running system.
 
 ## Extensions
 
-`extensions => all` attaches the three NervesHub extensions: `health` reports
-memory and uptime, `geo` reports a location, and `logging` carries log lines.
+`extensions => all` attaches the four NervesHub extensions: `health` reports
+memory and uptime, `geo` reports a location, `logging` carries log lines, and
+`alarms` sends the application's alarms as they are raised and cleared.
+
+### Alarms
+
+`alarms => Fun` returns the complete set raised right now, `#{Name =>
+Description}`. Without the `alarms` extension it goes on the health report,
+which NervesHub asks for hourly on an idle device. With it, the agent calls
+`Fun` every `alarms_interval_ms` (30 s by default) and sends only what changed,
+stamped with the time the alarm appeared; `nh_ext_alarms` has the details.
+
+A `Fun` of one argument is given what it returned last time, so an alarm can
+clear at a different level from the one that raised it:
+
+```erlang
+alarms => fun(Raised) ->
+    Block = erlang:system_info(esp32_largest_free_block),
+    Limit = case maps:is_key(<<"LowMemory">>, Raised) of true -> 36000; false -> 32768 end,
+    case Block < Limit of
+        true -> #{<<"LowMemory">> => <<"heap fragmented">>};
+        false -> #{}
+    end
+end
+```
+
+Keep descriptions stable: a new description is sent as the alarm raised again.
 
 `nh_logger` is a `logger` handler that sends everything logged, and
 `nerves_hub_link:send_log/3` sends one line directly.

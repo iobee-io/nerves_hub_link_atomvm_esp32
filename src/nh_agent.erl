@@ -56,6 +56,13 @@
 %% free memory first (its own TLS connections, say); it hears `update_failed'
 %% if the update does not happen. A platform that does not report its heap (not an
 %% ESP32) has no such limit and always keeps it open.
+%%
+%% == Alarms ==
+%%
+%% With the `alarms' extension enabled and an `alarms => Fun', the agent asks
+%% the application for its alarms every `alarms_interval_ms' (30 s by default)
+%% and sends what changed; see `nh_ext_alarms'. It keeps asking while offline,
+%% so an alarm raised then keeps the time it was raised.
 %% @end
 %%-----------------------------------------------------------------------------
 -module(nh_agent).
@@ -84,6 +91,8 @@
 %% Console output goes up in pieces of at most this many bytes (`nh_console:chunks/2`).
 -define(CONSOLE_CHUNK, 256).
 
+-define(DEFAULT_ALARMS_INTERVAL_MS, 30000).
+
 -type config() :: #{
     url => binary() | string(),
     host => binary() | string(),
@@ -96,7 +105,8 @@
     handler => pid(),
     heartbeat_ms => pos_integer(),
     keep_open_above => non_neg_integer(),
-    before_update => fun(() -> ok)
+    before_update => fun(() -> ok),
+    alarms_interval_ms => pos_integer()
 }.
 
 -export_type([config/0]).
@@ -157,6 +167,7 @@ init(Config, Owner) ->
 
     case open(Transport, Config) of
         {ok, Handle} ->
+            _ = schedule_alarms(Extensions, Config),
             loop(#{
                 config => Config,
                 transport => Transport,
@@ -228,6 +239,10 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
             loop(update_failed(describe(Reason), State));
         {push_extension, Event, Payload} ->
             loop(push_extension(Event, Payload, State));
+        poll_alarms ->
+            {Extensions, Actions} = nh_extensions:poll_alarms(maps:get(extensions, State)),
+            _ = schedule_alarms(Extensions, maps:get(config, State)),
+            loop(run_extension_actions(Actions, State#{extensions => Extensions}));
         {push, Event, Payload} ->
             {Channel, Actions} = nh_channel:push(Event, Payload, maps:get(channel, State)),
             loop(run(Actions, State#{channel => Channel}));
@@ -571,6 +586,15 @@ push_extension(Event, Payload, State) ->
         <<"extensions">>, Event, Payload, maps:get(channel, State)
     ),
     run(Actions, State#{channel => Channel}).
+
+schedule_alarms(Extensions, Config) ->
+    case nh_extensions:polls_alarms(Extensions) of
+        true ->
+            Ms = maps:get(alarms_interval_ms, Config, ?DEFAULT_ALARMS_INTERVAL_MS),
+            erlang:send_after(Ms, self(), poll_alarms);
+        false ->
+            undefined
+    end.
 
 maybe_add_extensions(Channel, Extensions) ->
     case nh_extensions:enabled(Extensions) of
