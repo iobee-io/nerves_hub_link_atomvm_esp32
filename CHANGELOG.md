@@ -7,6 +7,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An application's console command with a built-in's name replaces it in
+  `help` too, not only when it runs.
 - The console keeps the last 20 lines entered: the up and down arrows walk
   through them, as in a shell. `clear` clears the screen.
 - The `alarms` extension (0.1.0): with `extensions => [alarms]` and an

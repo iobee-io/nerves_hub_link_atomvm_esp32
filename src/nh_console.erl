@@ -35,6 +35,8 @@
 %% must be quick, and one that raises prints the error instead of taking the
 %% console down.
 %%
+%% One with a built-in's name replaces it (`net', say, for a richer status).
+%%
 %% `help' lists the commands by section: the built-in ones are in `device' and
 %% `network'. `{Section, Name, Description, Fun}' puts an application's command
 %% in a section, one of those or its own; without one it goes in
@@ -319,9 +321,15 @@ run(Line, Commands) ->
         {Command, Args} -> execute(lists:keyfind(Command, 2, Commands), Command, Args)
     end.
 
+%% An application's command of a built-in's name replaces it, in `help' as
+%% when it runs.
 help(Commands) ->
+    Own = [Name || {_Section, Name, _Description, _Fun} <- Commands],
     All =
-        built_in() ++
+        [
+            Command
+         || {_Section, Name, _Description} = Command <- built_in(), not lists:member(Name, Own)
+        ] ++
             [{Section, Name, Description} || {Section, Name, Description, _Fun} <- Commands],
     Sections = lists:foldl(
         fun({Section, _, _}, Seen) ->

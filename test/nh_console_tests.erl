@@ -236,3 +236,14 @@ clear_clears_the_screen_test() ->
     {_, Output} = feed(<<"clear\r">>),
     ?assertMatch({_, _}, binary:match(Output, <<"\e[2J\e[H">>)),
     ?assertMatch({_, _}, binary:match(Output, nh_console:prompt())).
+
+%% An application's `net' replaces the built-in one, in `help' too.
+an_application_command_replaces_a_built_in_test() ->
+    State = nh_console:new([
+        {<<"network">>, <<"net">>, <<"the app's net">>, fun(_) -> <<"mine">> end}
+    ]),
+    {_, Help} = nh_console:handle_input(<<"help\r">>, State),
+    {_, Net} = nh_console:handle_input(<<"net\r">>, State),
+    ?assertMatch({_, _}, binary:match(Help, <<"the app's net">>)),
+    ?assertEqual(nomatch, binary:match(Help, <<"network address and signal">>)),
+    ?assertMatch({_, _}, binary:match(Net, <<"mine">>)).
