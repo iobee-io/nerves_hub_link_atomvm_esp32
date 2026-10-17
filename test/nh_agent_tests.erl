@@ -248,6 +248,8 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
     }),
 
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    %% No threshold: closed, and the owner hears so (off a device, no block).
+    ?assertEqual({download_socket, closed, undefined}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
 
@@ -281,6 +283,7 @@ a_socket_kept_open_reports_progress_and_failure_at_once_test() ->
         <<"checksum">> => <<"abc">>
     }),
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertEqual({download_socket, open, undefined}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
 
     Agent ! {nh_ota, self(), {progress, 42}},
@@ -322,6 +325,7 @@ before_update_runs_before_the_download_test() ->
     after 1000 -> erlang:error(no_before_update)
     end,
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({download_socket, closed, _}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
 
     nh_agent:stop(Agent).

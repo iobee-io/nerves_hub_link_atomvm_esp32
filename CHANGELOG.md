@@ -7,6 +7,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The owner hears `{download_socket, open | closed, LargestFreeBlock}` as a
+  download starts: with the socket closed nothing of it reaches NervesHub.
 - An application's console command with a built-in's name replaces it in
   `help` too, not only when it runs.
 - The console keeps the last 20 lines entered: the up and down arrows walk

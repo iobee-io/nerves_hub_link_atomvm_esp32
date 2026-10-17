@@ -52,6 +52,9 @@
 %% failure goes back at once; then it reconnects, since NervesHub only offers
 %% an update again on a join.
 %%
+%% The owner hears `{download_socket, open | closed, LargestFreeBlock}' as the
+%% download starts.
+%%
 %% `before_update => Fun' is called before any of this, so the application can
 %% free memory first (its own TLS connections, say); it hears `update_failed'
 %% if the update does not happen. A platform that does not report its heap (not an
@@ -449,10 +452,18 @@ before_update(#{config := #{before_update := Fun}}) ->
 before_update(_State) ->
     ok.
 
+%% The owner hears which it was, and the largest block it was decided on: with
+%% the socket closed nothing of the download reaches NervesHub, so that is the
+%% application's to keep until it is back.
 make_room_for_download(#{config := Config} = State) ->
-    case keep_open(maps:get(keep_open_above, Config, undefined), largest_free_block()) of
-        true -> State;
-        false -> close_for_download(State)
+    Largest = largest_free_block(),
+    case keep_open(maps:get(keep_open_above, Config, undefined), Largest) of
+        true ->
+            notify(State, {download_socket, open, Largest}),
+            State;
+        false ->
+            notify(State, {download_socket, closed, Largest}),
+            close_for_download(State)
     end.
 
 %% @private Exported for tests: a host has no ESP32 heap to measure.
