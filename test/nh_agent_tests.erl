@@ -693,6 +693,27 @@ join_device(Extra) ->
     ?assertMatch({joined, _}, next_event(1000)),
     {Agent, JoinRef}.
 
+%% A download that keeps making progress is left alone even when it takes
+%% several times the stall limit: the limit is idle time, not total time.
+a_slow_download_that_keeps_going_is_not_given_up_test() ->
+    {Agent, JoinRef} = join(#{updater => nh_ota_slow, download_stall_ms => 200}),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({download_socket, closed, _}, next_event(1000)),
+    ?assertMatch({update_started, _}, next_event(1000)),
+    ?assertEqual({update_ready, <<"alt.avm">>}, next_event(2000)),
+    %% Past the last timer: one left over from the download says nothing.
+    timer:sleep(300),
+    ?assertEqual(no_event, next_event(100)),
+
+    nh_agent:stop(Agent).
+
 %% A download that stops making progress is stopped and reported as failed,
 %% rather than holding the update -- and the device -- forever.
 a_stalled_download_is_given_up_test() ->

@@ -11,6 +11,9 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stopped and reported as failed (`download_stalled`): AtomVM's `ssl:recv/2`
   has no deadline, and a connection that stopped carrying data held the update
   forever.
+  It keeps one timer at a time: on AtomVM each timer is a process until it
+  fires, and one per progress percentage ran a board without PSRAM out of
+  memory halfway through a fast download.
 - The owner hears `{download_socket, open | closed, LargestFreeBlock}` as a
   download starts: with the socket closed nothing of it reaches NervesHub.
 - An application's console command with a built-in's name replaces it in

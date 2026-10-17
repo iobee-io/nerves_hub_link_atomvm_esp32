@@ -237,9 +237,9 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(updater_down(Pid, Reason, State));
         {nh_ota, _Pid, {progress, Percent}} ->
-            loop(progress(Percent, arm_stall(State)));
+            loop(progress(Percent, State#{progress_at => now_ms()}));
         {download_stall, Ref} ->
-            loop(stalled(Ref, State));
+            loop(stall_check(Ref, State));
         {nh_ota, _Pid, {ok, Slot}} ->
             %% Written and armed, not yet running. Rebooting is the
             %% application's call: it may have work to finish first, and a
@@ -445,21 +445,37 @@ close(#{transport := Transport, handle := Handle} = State) ->
         heartbeat_at => infinity
     }.
 
-%% A fresh deadline on every sign of life; the timer cannot be cancelled on
-%% AtomVM (atomvm/AtomVM#2409), so a stale one is told apart by its ref.
-arm_stall(#{config := Config} = State) ->
+%% One timer at a time, never one per sign of life. On AtomVM every timer is
+%% a process of its own (`timer_manager') that lives until it fires, and a timer
+%% cannot be cancelled (atomvm/AtomVM#2409): re-arming on each progress
+%% percentage left ~100 of them alive through a fast download, and a board
+%% without PSRAM ran out of memory halfway (0.6.0, 2026-10-17). Progress only
+%% notes the time; when the timer fires it looks at how long ago that was, and
+%% either gives up or waits out the rest. A stale timer is told apart by its ref.
+arm_stall(State) ->
+    arm_stall(stall_ms(State), State#{progress_at => now_ms()}).
+
+arm_stall(Ms, State) ->
     Ref = make_ref(),
-    erlang:send_after(
-        maps:get(download_stall_ms, Config, ?DEFAULT_STALL_MS), self(), {download_stall, Ref}
-    ),
+    erlang:send_after(Ms, self(), {download_stall, Ref}),
     State#{stall => Ref}.
 
-stalled(Ref, #{stall := Ref, update := Pid} = State) ->
-    exit(Pid, kill),
-    notify(State, {update_failed, download_stalled}),
-    update_failed(<<"download_stalled">>, maps:remove(stall, State));
-stalled(_Ref, State) ->
+stall_check(Ref, #{stall := Ref, update := Pid, progress_at := At} = State) ->
+    Idle = now_ms() - At,
+
+    case Idle >= stall_ms(State) of
+        true ->
+            exit(Pid, kill),
+            notify(State, {update_failed, download_stalled}),
+            update_failed(<<"download_stalled">>, maps:remove(stall, State));
+        false ->
+            arm_stall(stall_ms(State) - Idle, State)
+    end;
+stall_check(_Ref, State) ->
     State.
+
+stall_ms(#{config := Config}) ->
+    maps:get(download_stall_ms, Config, ?DEFAULT_STALL_MS).
 
 %% Nowhere to send progress while the socket is closed for the download.
 progress(_Percent, #{handle := undefined} = State) ->
