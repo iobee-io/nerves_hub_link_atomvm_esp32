@@ -7,6 +7,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A download with no progress for `download_stall_ms` (60 s by default) is
+  stopped and reported as failed (`download_stalled`): AtomVM's `ssl:recv/2`
+  has no deadline, and a connection that stopped carrying data held the update
+  forever.
 - The owner hears `{download_socket, open | closed, LargestFreeBlock}` as a
   download starts: with the socket closed nothing of it reaches NervesHub.
 - An application's console command with a built-in's name replaces it in

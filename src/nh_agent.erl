@@ -53,7 +53,8 @@
 %% an update again on a join.
 %%
 %% The owner hears `{download_socket, open | closed, LargestFreeBlock}' as the
-%% download starts.
+%% download starts. One with no progress for `download_stall_ms' (60 s) is
+%% stopped and reported as failed, `download_stalled'.
 %%
 %% `before_update => Fun' is called before any of this, so the application can
 %% free memory first (its own TLS connections, say); it hears `update_failed'
@@ -96,6 +97,12 @@
 
 -define(DEFAULT_ALARMS_INTERVAL_MS, 30000).
 
+%% A download with no progress for this long is given up. AtomVM's
+%% `ssl:recv/2' waits with no deadline, and a connection that stops carrying
+%% data (a cellular link, say) would otherwise hold the update -- and the
+%% device -- forever.
+-define(DEFAULT_STALL_MS, 60000).
+
 -type config() :: #{
     url => binary() | string(),
     host => binary() | string(),
@@ -109,7 +116,8 @@
     heartbeat_ms => pos_integer(),
     keep_open_above => non_neg_integer(),
     before_update => fun(() -> ok),
-    alarms_interval_ms => pos_integer()
+    alarms_interval_ms => pos_integer(),
+    download_stall_ms => pos_integer()
 }.
 
 -export_type([config/0]).
@@ -229,7 +237,9 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(updater_down(Pid, Reason, State));
         {nh_ota, _Pid, {progress, Percent}} ->
-            loop(progress(Percent, State));
+            loop(progress(Percent, arm_stall(State)));
+        {download_stall, Ref} ->
+            loop(stalled(Ref, State));
         {nh_ota, _Pid, {ok, Slot}} ->
             %% Written and armed, not yet running. Rebooting is the
             %% application's call: it may have work to finish first, and a
@@ -398,11 +408,12 @@ maybe_start_update(Payload, State) ->
         {auto, true, false} ->
             ok = before_update(State),
             State1 = make_room_for_download(State),
-            Pid = nh_ota:start_update(Payload, self(), #{
+            Updater = maps:get(updater, maps:get(config, State1), nh_ota),
+            Pid = Updater:start_update(Payload, self(), #{
                 keys => maps:get(firmware_keys, State1, [])
             }),
             notify(State1, {update_started, Pid}),
-            State1#{update => Pid};
+            arm_stall(State1#{update => Pid});
         {auto, true, true} ->
             %% One at a time. A second `update' while a download is in flight, or
             %% once one is armed, is the server repeating itself, not a new job.
@@ -433,6 +444,22 @@ close(#{transport := Transport, handle := Handle} = State) ->
         channel => nh_channel:disconnected(maps:get(channel, State)),
         heartbeat_at => infinity
     }.
+
+%% A fresh deadline on every sign of life; the timer cannot be cancelled on
+%% AtomVM (atomvm/AtomVM#2409), so a stale one is told apart by its ref.
+arm_stall(#{config := Config} = State) ->
+    Ref = make_ref(),
+    erlang:send_after(
+        maps:get(download_stall_ms, Config, ?DEFAULT_STALL_MS), self(), {download_stall, Ref}
+    ),
+    State#{stall => Ref}.
+
+stalled(Ref, #{stall := Ref, update := Pid} = State) ->
+    exit(Pid, kill),
+    notify(State, {update_failed, download_stalled}),
+    update_failed(<<"download_stalled">>, maps:remove(stall, State));
+stalled(_Ref, State) ->
+    State.
 
 %% Nowhere to send progress while the socket is closed for the download.
 progress(_Percent, #{handle := undefined} = State) ->

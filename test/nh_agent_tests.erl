@@ -690,3 +690,22 @@ join_device(Extra) ->
     ok = reply(Agent, JoinRef, Ref, <<"device">>),
     ?assertMatch({joined, _}, next_event(1000)),
     {Agent, JoinRef}.
+
+%% A download that stops making progress is stopped and reported as failed,
+%% rather than holding the update -- and the device -- forever.
+a_stalled_download_is_given_up_test() ->
+    {Agent, JoinRef} = join(#{updater => nh_ota_stalled, download_stall_ms => 200}),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({download_socket, closed, _}, next_event(1000)),
+    {update_started, Pid} = next_event(1000),
+    ?assertEqual({update_failed, download_stalled}, next_event(2000)),
+    ?assertNot(is_process_alive(Pid)),
+
+    nh_agent:stop(Agent).
