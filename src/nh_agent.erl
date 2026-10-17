@@ -50,7 +50,7 @@
 %% download starts, the largest free block of heap is at least `Bytes' -- room
 %% for both sessions. The device then stays online, reports progress, and a
 %% failure goes back at once; then it reconnects, since NervesHub only offers
-%% an update again on a join.
+%% an update again on a join. `never' closes it whatever the heap.
 %%
 %% The owner hears `{download_socket, open | closed, LargestFreeBlock}' as the
 %% download starts. One with no progress for `download_stall_ms' (60 s) is
@@ -114,7 +114,7 @@
     metadata => map(),
     handler => pid(),
     heartbeat_ms => pos_integer(),
-    keep_open_above => non_neg_integer(),
+    keep_open_above => non_neg_integer() | never,
     before_update => fun(() -> ok),
     alarms_interval_ms => pos_integer(),
     download_stall_ms => pos_integer()
@@ -495,6 +495,7 @@ make_room_for_download(#{config := Config} = State) ->
 
 %% @private Exported for tests: a host has no ESP32 heap to measure.
 keep_open(undefined, _Largest) -> false;
+keep_open(never, _Largest) -> false;
 keep_open(_Min, undefined) -> true;
 keep_open(Min, Largest) -> Largest >= Min.
 

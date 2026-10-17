@@ -332,6 +332,8 @@ before_update_runs_before_the_download_test() ->
 
 keep_open_needs_a_threshold_and_a_block_that_large_test() ->
     ?assertNot(nh_agent:keep_open(undefined, 100000)),
+    ?assertNot(nh_agent:keep_open(never, 100000)),
+    ?assertNot(nh_agent:keep_open(never, undefined)),
     ?assert(nh_agent:keep_open(60000, undefined)),
     ?assert(nh_agent:keep_open(60000, 60000)),
     ?assertNot(nh_agent:keep_open(60000, 59999)).
