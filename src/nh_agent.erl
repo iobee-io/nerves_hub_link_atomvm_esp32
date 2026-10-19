@@ -288,6 +288,12 @@ run_action({send, Frame}, State) ->
             State;
         {error, Reason} ->
             notify(State, {send_failed, Reason}),
+            State;
+        %% atomvm_websocket_client's port answers a bare `not_connected' (or
+        %% `send_failed') rather than the `{error, _}' it documents, when the
+        %% socket closed under a queued send.
+        Reason ->
+            notify(State, {send_failed, Reason}),
             State
     end;
 run_action({event, Event}, State) ->

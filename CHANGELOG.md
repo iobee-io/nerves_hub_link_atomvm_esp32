@@ -56,6 +56,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A send the transport refused with anything but `{error, _}` crashed the
+  agent, and its owner with it: atomvm_websocket_client answers a bare
+  `not_connected` when the socket closed under a queued send. Any refusal is now
+  `{send_failed, Reason}`.
+
 - `capture_io` with `register` captures by the name, through one capture
   registered as `nh_io_capture`. An agent started again under the name used to
   get a new capture each time, and the old one stayed alive sending to the dead
