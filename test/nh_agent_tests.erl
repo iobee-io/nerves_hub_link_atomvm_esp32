@@ -747,6 +747,26 @@ a_slow_download_that_keeps_going_is_not_given_up_test() ->
 
     nh_agent:stop(Agent).
 
+%% A resume is a sign of life: the download reconnected and asked for the
+%% rest. The owner hears where it resumed from.
+a_resumed_download_is_not_given_up_test() ->
+    {Agent, JoinRef} = join(#{updater => nh_ota_resumed, download_stall_ms => 200}),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({download_socket, closed, _}, next_event(1000)),
+    ?assertMatch({update_started, _}, next_event(1000)),
+    ?assertEqual({download_resumed, 4096}, next_event(1000)),
+    ?assertMatch({download_pause, _}, next_event(1000)),
+    ?assertEqual({update_ready, <<"alt.avm">>}, next_event(1000)),
+
+    nh_agent:stop(Agent).
+
 %% A download that stops making progress is stopped and reported as failed,
 %% rather than holding the update -- and the device -- forever.
 a_stalled_download_is_given_up_test() ->

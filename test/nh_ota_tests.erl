@@ -205,6 +205,68 @@ a_non_200_response_is_refused_test() ->
     cleanup(ok),
     ?assertEqual({error, {http_status, 404}}, Result).
 
+%% ---------------------------------------------------------------- resuming
+
+%% Over a modem the last bytes of a download sometimes never arrive (#27 in
+%% iobee_bee): the connection goes quiet and stays so. A quiet or cut
+%% connection is resumed from the byte it stopped at, and the archive is still
+%% checked whole.
+resume(Cuts, Extra) ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:serve_cut(body(), Cuts),
+    ok = nh_ota_fake_flash:expect(#{avm_sha256 => digest(body())}),
+    Self = self(),
+    Opts = opts(Extra#{resume_after_ms => 50, resumed => fun(At) -> Self ! {resumed, At} end}),
+
+    Result = nh_ota:apply_update(payload(body()), Opts),
+    Written = nh_ota_fake_esp:written(),
+    Ranges = nh_ota_fake_http:ranges(),
+
+    cleanup(ok),
+    {Result, Written, Ranges, resumed()}.
+
+resumed() ->
+    receive
+        {resumed, At} -> [At | resumed()]
+    after 0 -> []
+    end.
+
+a_quiet_or_cut_connection_resumes_where_it_stopped_test() ->
+    {Result, Written, Ranges, Resumed} = resume([{5000, stall}, {8000, close}], #{}),
+
+    ?assertEqual({ok, ?SLOT}, Result),
+    ?assertEqual(body(), binary:part(Written, 0, byte_size(body()))),
+    ?assertEqual([none, <<"bytes=5000-">>, <<"bytes=8000-">>], Ranges),
+    ?assertEqual([5000, 8000], Resumed).
+
+a_connection_that_never_answers_is_resumed_from_the_start_test() ->
+    {Result, _Written, Ranges, Resumed} = resume([{0, stall}], #{}),
+
+    ?assertEqual({ok, ?SLOT}, Result),
+    ?assertEqual([none, <<"bytes=0-">>], Ranges),
+    ?assertEqual([0], Resumed).
+
+it_gives_up_after_the_resumes_it_has_test() ->
+    Cuts = [{1000, stall}, {2000, stall}, {3000, stall}, {4000, stall}],
+    {Result, _Written, Ranges, Resumed} = resume(Cuts, #{resumes => 3}),
+
+    ?assertEqual({error, download_stalled}, Result),
+    ?assertEqual(4, length(Ranges)),
+    ?assertEqual([1000, 2000, 3000], Resumed).
+
+a_refused_connection_is_tried_again_test() ->
+    ok = nh_ota_fake_esp:start(),
+    ok = nh_ota_fake_http:fail_connect(),
+    ok = nh_ota_fake_flash:expect(#{}),
+    Self = self(),
+    Opts = opts(#{resumed => fun(At) -> Self ! {resumed, At} end}),
+
+    Result = nh_ota:apply_update(payload(body()), Opts),
+
+    cleanup(ok),
+    ?assertMatch({error, {connect_failed, _}}, Result),
+    ?assertEqual([0, 0, 0], resumed()).
+
 %% ------------------------------------------------------- pending/commit/revert
 
 markers_test_() ->

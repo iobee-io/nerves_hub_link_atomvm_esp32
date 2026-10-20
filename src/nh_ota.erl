@@ -95,7 +95,9 @@ apply_update(Payload) -> apply_update(Payload, #{}).
 %%
 %% `Payload' is what NervesHub sends: `firmware_url', `size' and `checksum'.
 %% `Opts' may carry a `progress' function of one argument, called with a
-%% percentage as the download proceeds, and a `slot' to override the target.
+%% percentage as the download proceeds, a `resumed' function called with the
+%% byte a download resumed from, `resume_after_ms' and `resumes' (see
+%% `recv_loop/2'), and a `slot' to override the target.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec apply_update(map(), map()) -> update_result().
@@ -149,16 +151,7 @@ erase(Slot, Size, Opts) when is_integer(Size), Size > 0 ->
 erase(_Slot, Size, _Opts) ->
     {error, {invalid_update_size, Size}}.
 
-fetch(
-    Slot,
-    #{protocol := Protocol, host := Host, port := Port, path := Path},
-    Size,
-    Checksum,
-    Progress,
-    Opts
-) ->
-    Http = http(Opts),
-
+fetch(Slot, Parsed, Size, Checksum, Progress, Opts) ->
     %% AtomVM's `ssl' is a gen_server that has to be started before
     %% `connect/2,3' will do anything but crash with `{noproc, ...}' -- ours
     %% is the only thing on this device that ever calls into it (the
@@ -167,6 +160,106 @@ fetch(
     %% second call just returns `ok'.
     ok = ssl:start(),
 
+    State = #{
+        slot => Slot,
+        keys => maps:get(keys, Opts, []),
+        opts => Opts,
+        url => Parsed,
+        offset => 0,
+        written => 0,
+        received => 0,
+        resumes => 0,
+        buffer => <<>>,
+        hash => crypto:hash_init(sha256),
+        size => Size,
+        progress => Progress,
+        reported => -1
+    },
+    finish(recv_loop(start_reader(State), State), Slot, Checksum, Opts).
+
+%% == Resuming ==
+%%
+%% A connection can stop carrying data and never say so: over a cellular modem
+%% the last bytes of a download sometimes never arrive, and AtomVM's
+%% `ssl:recv/2' has no deadline. So the connection is read by a process of its
+%% own, one batch at a time, and this one waits for each batch with a deadline,
+%% `resume_after_ms' (20 s by default). On a connection that went quiet, failed
+%% or closed short it reconnects and asks for the rest, `Range: bytes=N-', up to
+%% `resumes' times (3 by default), telling `resumed' the byte it resumed from.
+%% The sha256 at the end still covers the whole archive. The reader is stopped
+%% before the next one connects: a board without PSRAM may have room for one
+%% TLS session, not two.
+-define(RESUME_AFTER_MS, 20000).
+-define(RESUMES, 3).
+
+recv_loop({Reader, _Monitor} = R, #{opts := Opts} = State) ->
+    receive
+        {?MODULE, Reader, {responses, Responses}} ->
+            case handle(Responses, State) of
+                {done, Final} ->
+                    stop_reader(R),
+                    flush(Final);
+                {continue, Next} ->
+                    Reader ! {?MODULE, self(), more},
+                    recv_loop(R, Next);
+                {error, _} = Error ->
+                    stop_reader(R),
+                    Error
+            end;
+        %% Passive mode reports a peer close as an error even when the response
+        %% was complete, which is how a body with no length ends. One that
+        %% knows its length and is short of it was cut.
+        {?MODULE, Reader, closed} ->
+            case State of
+                #{size := Size, received := Received} when Received < Size ->
+                    resume(R, {error, {stream_failed, closed}}, State);
+                _ ->
+                    stop_reader(R),
+                    flush(State)
+            end;
+        {?MODULE, Reader, {error, _} = Error} ->
+            resume(R, Error, State)
+    after maps:get(resume_after_ms, Opts, ?RESUME_AFTER_MS) ->
+        resume(R, {error, download_stalled}, State)
+    end.
+
+resume(R, Error, #{opts := Opts, resumes := Resumes, received := Received} = State) ->
+    stop_reader(R),
+    case Resumes < maps:get(resumes, Opts, ?RESUMES) of
+        true ->
+            _ = (maps:get(resumed, Opts, fun(_Offset) -> ok end))(Received),
+            Next = State#{resumes => Resumes + 1},
+            recv_loop(start_reader(Next), Next);
+        false ->
+            Error
+    end.
+
+%% Linked, so it goes with the download if the agent stops that; monitored, so
+%% the next one connects only once this one is gone.
+start_reader(#{url := Url, received := Received, resumes := Resumes, opts := Opts}) ->
+    Owner = self(),
+    Headers =
+        case Resumes of
+            0 -> [];
+            _ -> [{<<"Range">>, [<<"bytes=">>, integer_to_binary(Received), <<"-">>]}]
+        end,
+    Reader = spawn_link(fun() -> reader(Owner, Url, Headers, http(Opts)) end),
+    {Reader, monitor(process, Reader)}.
+
+%% One that is waiting on a quiet connection hears nothing, so it is killed;
+%% its socket goes with it.
+stop_reader({Reader, Monitor}) ->
+    unlink(Reader),
+    exit(Reader, kill),
+    receive
+        {'DOWN', Monitor, process, Reader, _} -> ok
+    end,
+    receive
+        {?MODULE, Reader, _} -> ok
+    after 0 -> ok
+    end.
+
+reader(Owner, #{protocol := Protocol, host := Host, port := Port, path := Path}, Headers, Http) ->
     %% Passive because AtomVM's `ssl' asserts `{active, false}'. Meant to be
     %% verified against the bundled CAs, but AtomVM's ssl:process_options/3
     %% has no clause for `{verify, verify_peer}' yet -- its own type spec
@@ -178,56 +271,40 @@ fetch(
     %% the bytes.
     case Http:connect(Protocol, Host, Port, [{active, false}, {verify, verify_none}]) of
         {ok, Conn} ->
-            case Http:request(Conn, <<"GET">>, Path, [], undefined) of
+            case Http:request(Conn, <<"GET">>, Path, Headers, undefined) of
                 {ok, Conn2, _Ref} ->
-                    State = #{
-                        slot => Slot,
-                        keys => maps:get(keys, Opts, []),
-                        opts => Opts,
-                        offset => 0,
-                        written => 0,
-                        buffer => <<>>,
-                        hash => crypto:hash_init(sha256),
-                        size => Size,
-                        progress => Progress,
-                        reported => -1,
-                        status => undefined
-                    },
-                    Result = recv_loop(Conn2, State),
-                    _ = Http:close(Conn2),
-                    finish(Result, Slot, Checksum, Opts);
+                    read(Owner, Conn2, Http);
                 {error, Reason} ->
                     _ = Http:close(Conn),
-                    {error, {request_failed, Reason}}
+                    Owner ! {?MODULE, self(), {error, {request_failed, Reason}}}
             end;
         {error, Reason} ->
-            {error, {connect_failed, Reason}}
+            Owner ! {?MODULE, self(), {error, {connect_failed, Reason}}}
     end.
 
-recv_loop(Conn, #{opts := Opts} = State) ->
-    Http = http(Opts),
-
+%% A batch at a time: the next is read once the last is written, so a fast
+%% link does not pile the archive up in a mailbox.
+read(Owner, Conn, Http) ->
     case Http:recv(Conn, 0) of
         {ok, Conn2, Responses} ->
-            case handle(Responses, State) of
-                {done, Final} -> flush(Final);
-                {continue, Next} -> recv_loop(Conn2, Next);
-                {error, _} = Error -> Error
+            Owner ! {?MODULE, self(), {responses, Responses}},
+            receive
+                {?MODULE, Owner, more} -> read(Owner, Conn2, Http)
             end;
-        %% Passive mode reports a peer close as an error even when the response
-        %% was complete, which is how a body with no length ends.
         {error, {_Transport, closed}} ->
-            flush(State);
+            Owner ! {?MODULE, self(), closed};
         {error, Reason} ->
-            {error, {stream_failed, Reason}}
+            Owner ! {?MODULE, self(), {error, {stream_failed, Reason}}}
     end.
 
+%% A resumed request answers 206 with the rest; anything else is not the rest.
 handle([], State) ->
     {continue, State};
-handle([{status, _Ref, Status} | Rest], State) ->
-    case Status of
-        200 -> handle(Rest, State#{status => 200});
-        Other -> {error, {http_status, Other}}
+handle([{status, _Ref, Status} | Rest], #{resumes := Resumes} = State) ->
+    case {Status, Resumes} of
+        {200, 0} -> handle(Rest, State);
+        {206, N} when N > 0 -> handle(Rest, State);
+        _ -> {error, {http_status, Status}}
     end;
 handle([{header, _Ref, _Header} | Rest], State) ->
     handle(Rest, State);
@@ -244,9 +321,11 @@ handle([{done, _Ref} | _Rest], State) ->
 %% Buffer to a block, write whole blocks, keep the remainder. The hash covers
 %% the bytes as they arrive, so it catches corruption in flight rather than
 %% re-reading what was just written.
-write(Chunk, #{buffer := Buffer, hash := Hash} = State) ->
+write(Chunk, #{buffer := Buffer, hash := Hash, received := Received} = State) ->
     Combined = <<Buffer/binary, Chunk/binary>>,
-    Next = State#{hash => crypto:hash_update(Hash, Chunk)},
+    Next = State#{
+        hash => crypto:hash_update(Hash, Chunk), received => Received + byte_size(Chunk)
+    },
     case emit_blocks(Combined, Next) of
         {ok, Emitted} -> {ok, report(Emitted)};
         {error, _} = Error -> Error
@@ -434,7 +513,8 @@ revert(Opts) ->
 %%
 %% The download takes as long as it takes, and the agent has heartbeats to send
 %% while it runs — so it does not run on the agent's process. The caller
-%% receives `{nh_ota, self(), {progress, Percent}}' as it goes and
+%% receives `{nh_ota, self(), {progress, Percent}}' as it goes,
+%% `{nh_ota, self(), {resumed, Offset}}' for each resume (see `recv_loop/2'), and
 %% `{nh_ota, self(), Result}' at the end.
 %% @end
 %%-----------------------------------------------------------------------------
@@ -455,7 +535,10 @@ start_update(Payload, Owner, Opts) ->
         spawn_monitor(fun() ->
             Self = self(),
             Progress = fun(Percent) -> Owner ! {nh_ota, Self, {progress, Percent}} end,
-            Owner ! {nh_ota, Self, apply_update(Payload, Opts#{progress => Progress})}
+            Resumed = fun(Offset) -> Owner ! {nh_ota, Self, {resumed, Offset}} end,
+            Owner !
+                {nh_ota, Self,
+                    apply_update(Payload, Opts#{progress => Progress, resumed => Resumed})}
         end),
 
     Pid.

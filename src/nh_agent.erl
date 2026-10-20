@@ -57,6 +57,8 @@
 %% stopped and reported as failed, `download_stalled'. As the download ends,
 %% done, failed or stalled, it hears `{download_pause, Ms}': the longest it
 %% went without progress, to tell a slow link from one that stops now and then.
+%% A download that resumes (see `nh_ota') makes it hear `{download_resumed,
+%% Offset}', the byte it resumed from; a resume counts as progress.
 %%
 %% `before_update => Fun' is called before any of this, so the application can
 %% free memory first (its own TLS connections, say); it hears `update_failed'
@@ -240,6 +242,9 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
             loop(updater_down(Pid, Reason, State));
         {nh_ota, _Pid, {progress, Percent}} ->
             loop(progress(Percent, noted_progress(State)));
+        {nh_ota, _Pid, {resumed, Offset}} ->
+            notify(State, {download_resumed, Offset}),
+            loop(noted_progress(State));
         {download_stall, Ref} ->
             loop(stall_check(Ref, State));
         {nh_ota, _Pid, {ok, Slot}} ->

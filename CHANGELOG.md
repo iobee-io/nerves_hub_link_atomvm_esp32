@@ -7,6 +7,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A download whose connection goes quiet (`resume_after_ms`, 20 s by default),
+  fails or closes short reconnects and asks for the rest, `Range: bytes=N-`, up
+  to `resumes` times (3) before it fails: over a cellular modem the last bytes
+  of a download sometimes never arrived, and the update failed at 95 %. The
+  connection is read by a process of its own, stopped before the next one
+  connects. The owner hears `{download_resumed, Offset}`; a resume counts as
+  progress against `download_stall_ms`. The sha256 still covers the whole
+  archive.
+
 - The owner hears `{download_pause, Ms}` as a download ends (done, failed or
   stalled): the longest it went without progress. With the socket closed for the
   download nothing else of it reaches NervesHub, and it tells a slow link from
