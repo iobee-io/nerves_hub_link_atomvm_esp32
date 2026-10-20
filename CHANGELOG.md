@@ -7,6 +7,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The owner hears `{download_pause, Ms}` as a download ends (done, failed or
+  stalled): the longest it went without progress. With the socket closed for the
+  download nothing else of it reaches NervesHub, and it tells a slow link from
+  one that stops now and then, against `download_stall_ms`.
+
 - A download with no progress for `download_stall_ms` (60 s by default) is
   stopped and reported as failed (`download_stalled`): AtomVM's `ssl:recv/2`
   has no deadline, and a connection that stopped carrying data held the update

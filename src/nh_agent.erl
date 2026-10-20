@@ -54,7 +54,9 @@
 %%
 %% The owner hears `{download_socket, open | closed, LargestFreeBlock}' as the
 %% download starts. One with no progress for `download_stall_ms' (60 s) is
-%% stopped and reported as failed, `download_stalled'.
+%% stopped and reported as failed, `download_stalled'. As the download ends,
+%% done, failed or stalled, it hears `{download_pause, Ms}': the longest it
+%% went without progress, to tell a slow link from one that stops now and then.
 %%
 %% `before_update => Fun' is called before any of this, so the application can
 %% free memory first (its own TLS connections, say); it hears `update_failed'
@@ -237,7 +239,7 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(updater_down(Pid, Reason, State));
         {nh_ota, _Pid, {progress, Percent}} ->
-            loop(progress(Percent, State#{progress_at => now_ms()}));
+            loop(progress(Percent, noted_progress(State)));
         {download_stall, Ref} ->
             loop(stall_check(Ref, State));
         {nh_ota, _Pid, {ok, Slot}} ->
@@ -245,9 +247,11 @@ loop(#{heartbeat_at := HeartbeatAt} = State) ->
             %% application's call: it may have work to finish first, and a
             %% library that restarts a device on its own is a library that
             %% surprises someone.
+            report_pause(State),
             notify(State, {update_ready, Slot}),
             loop(reopen(maps:remove(update, State#{armed => Slot})));
         {nh_ota, _Pid, {error, Reason}} ->
+            report_pause(State),
             notify(State, {update_failed, Reason}),
             loop(update_failed(describe(Reason), State));
         {push_extension, Event, Payload} ->
@@ -459,7 +463,7 @@ close(#{transport := Transport, handle := Handle} = State) ->
 %% notes the time; when the timer fires it looks at how long ago that was, and
 %% either gives up or waits out the rest. A stale timer is told apart by its ref.
 arm_stall(State) ->
-    arm_stall(stall_ms(State), State#{progress_at => now_ms()}).
+    arm_stall(stall_ms(State), State#{progress_at => now_ms(), longest_pause => 0}).
 
 arm_stall(Ms, State) ->
     Ref = make_ref(),
@@ -472,6 +476,7 @@ stall_check(Ref, #{stall := Ref, update := Pid, progress_at := At} = State) ->
     case Idle >= stall_ms(State) of
         true ->
             exit(Pid, kill),
+            report_pause(State),
             notify(State, {update_failed, download_stalled}),
             update_failed(<<"download_stalled">>, maps:remove(stall, State));
         false ->
@@ -479,6 +484,17 @@ stall_check(Ref, #{stall := Ref, update := Pid, progress_at := At} = State) ->
     end;
 stall_check(_Ref, State) ->
     State.
+
+noted_progress(#{progress_at := At} = State) ->
+    Now = now_ms(),
+    State#{progress_at => Now, longest_pause => max(Now - At, maps:get(longest_pause, State, 0))}.
+
+%% Up to now: a download that ends, or stalls, after a long pause counts it.
+report_pause(#{progress_at := At} = State) ->
+    Pause = max(now_ms() - At, maps:get(longest_pause, State, 0)),
+    notify(State, {download_pause, Pause});
+report_pause(_State) ->
+    ok.
 
 stall_ms(#{config := Config}) ->
     maps:get(download_stall_ms, Config, ?DEFAULT_STALL_MS).

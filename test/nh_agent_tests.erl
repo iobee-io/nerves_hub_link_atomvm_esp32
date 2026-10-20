@@ -279,6 +279,7 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
     %% No threshold: closed, and the owner hears so (off a device, no block).
     ?assertEqual({download_socket, closed, undefined}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
+    ?assertMatch({download_pause, _}, next_event(2000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
 
     %% the socket was closed for the download and reopened after it
@@ -318,6 +319,7 @@ a_socket_kept_open_reports_progress_and_failure_at_once_test() ->
     Progress = wait_for_event(<<"update_progress">>, 1000),
     ?assertEqual(42, maps:get(<<"value">>, Progress)),
 
+    ?assertMatch({download_pause, _}, next_event(2000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
     Reported = wait_for_event(<<"status_update">>, 1000),
     ?assertEqual(<<"no_flash_access">>, maps:get(<<"reason">>, Reported)),
@@ -735,6 +737,9 @@ a_slow_download_that_keeps_going_is_not_given_up_test() ->
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
     ?assertMatch({download_socket, closed, _}, next_event(1000)),
     ?assertMatch({update_started, _}, next_event(1000)),
+    %% The longest pause, reported as it ends: about the 60 ms between steps.
+    {download_pause, Pause} = next_event(2000),
+    ?assert(Pause >= 40 andalso Pause < 200),
     ?assertEqual({update_ready, <<"alt.avm">>}, next_event(2000)),
     %% Past the last timer: one left over from the download says nothing.
     timer:sleep(300),
@@ -756,6 +761,9 @@ a_stalled_download_is_given_up_test() ->
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
     ?assertMatch({download_socket, closed, _}, next_event(1000)),
     {update_started, Pid} = next_event(1000),
+    %% A stall is a pause at least as long as the limit.
+    {download_pause, Pause} = next_event(2000),
+    ?assert(Pause >= 200),
     ?assertEqual({update_failed, download_stalled}, next_event(2000)),
     ?assertNot(is_process_alive(Pid)),
 
