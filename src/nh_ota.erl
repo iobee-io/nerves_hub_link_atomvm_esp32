@@ -169,6 +169,8 @@ fetch(Slot, Parsed, Size, Checksum, Progress, Opts) ->
         written => 0,
         received => 0,
         resumes => 0,
+        since => 0,
+        stuck => 0,
         buffer => <<>>,
         hash => crypto:hash_init(sha256),
         size => Size,
@@ -183,13 +185,15 @@ fetch(Slot, Parsed, Size, Checksum, Progress, Opts) ->
 %% the last bytes of a download sometimes never arrive, and AtomVM's
 %% `ssl:recv/2' has no deadline. So the connection is read by a process of its
 %% own, one batch at a time, and this one waits for each batch with a deadline,
-%% `resume_after_ms' (20 s by default). On a connection that went quiet, failed
-%% or closed short it reconnects and asks for the rest, `Range: bytes=N-', up to
-%% `resumes' times (3 by default), telling `resumed' the byte it resumed from.
-%% The sha256 at the end still covers the whole archive. The reader is stopped
-%% before the next one connects: a board without PSRAM may have room for one
-%% TLS session, not two.
--define(RESUME_AFTER_MS, 20000).
+%% `resume_after_ms' (10 s by default). On a connection that went quiet, failed
+%% or closed short it reconnects and asks for the rest, `Range: bytes=N-',
+%% telling `resumed' the byte it resumed from. It gives up once `resumes'
+%% connections in a row (3 by default) brought no new byte: one that brought
+%% any starts the count again, since a slow link can take several connections
+%% to carry an archive. The sha256 at the end still covers the whole archive.
+%% The reader is stopped before the next one connects: a board without PSRAM
+%% may have room for one TLS session, not two.
+-define(RESUME_AFTER_MS, 10000).
 -define(RESUMES, 3).
 
 recv_loop({Reader, _Monitor} = R, #{opts := Opts} = State) ->
@@ -223,12 +227,19 @@ recv_loop({Reader, _Monitor} = R, #{opts := Opts} = State) ->
         resume(R, {error, download_stalled}, State)
     end.
 
-resume(R, Error, #{opts := Opts, resumes := Resumes, received := Received} = State) ->
+resume(R, Error, State) ->
+    #{opts := Opts, resumes := Resumes, received := Received, since := Since, stuck := Stuck} =
+        State,
     stop_reader(R),
-    case Resumes < maps:get(resumes, Opts, ?RESUMES) of
+    Stuck1 =
+        case Received > Since of
+            true -> 0;
+            false -> Stuck + 1
+        end,
+    case Stuck1 < maps:get(resumes, Opts, ?RESUMES) of
         true ->
             _ = (maps:get(resumed, Opts, fun(_Offset) -> ok end))(Received),
-            Next = State#{resumes => Resumes + 1},
+            Next = State#{resumes => Resumes + 1, since => Received, stuck => Stuck1},
             recv_loop(start_reader(Next), Next);
         false ->
             Error

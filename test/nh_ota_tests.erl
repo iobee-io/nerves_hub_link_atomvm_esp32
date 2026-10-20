@@ -246,13 +246,23 @@ a_connection_that_never_answers_is_resumed_from_the_start_test() ->
     ?assertEqual([none, <<"bytes=0-">>], Ranges),
     ?assertEqual([0], Resumed).
 
-it_gives_up_after_the_resumes_it_has_test() ->
-    Cuts = [{1000, stall}, {2000, stall}, {3000, stall}, {4000, stall}],
+%% A slow link can take several connections to carry an archive: each one that
+%% brings something starts the count again.
+connections_that_bring_something_keep_resuming_test() ->
+    Cuts = [{1000, stall}, {2000, stall}, {3000, close}, {4000, stall}, {5000, stall}],
+    {Result, Written, _Ranges, Resumed} = resume(Cuts, #{resumes => 3}),
+
+    ?assertEqual({ok, ?SLOT}, Result),
+    ?assertEqual(body(), binary:part(Written, 0, byte_size(body()))),
+    ?assertEqual([1000, 2000, 3000, 4000, 5000], Resumed).
+
+it_gives_up_after_connections_in_a_row_that_bring_nothing_test() ->
+    Cuts = [{1000, stall}, {1000, stall}, {1000, close}, {1000, stall}],
     {Result, _Written, Ranges, Resumed} = resume(Cuts, #{resumes => 3}),
 
     ?assertEqual({error, download_stalled}, Result),
     ?assertEqual(4, length(Ranges)),
-    ?assertEqual([1000, 2000, 3000], Resumed).
+    ?assertEqual([1000, 1000, 1000], Resumed).
 
 a_refused_connection_is_tried_again_test() ->
     ok = nh_ota_fake_esp:start(),
@@ -265,7 +275,8 @@ a_refused_connection_is_tried_again_test() ->
 
     cleanup(ok),
     ?assertMatch({error, {connect_failed, _}}, Result),
-    ?assertEqual([0, 0, 0], resumed()).
+    %% Three connections that brought nothing: the first and two resumes.
+    ?assertEqual([0, 0], resumed()).
 
 %% ------------------------------------------------------- pending/commit/revert
 
