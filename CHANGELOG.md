@@ -21,6 +21,9 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   atomvm_websocket_client before nerves-hub/atomvm_websocket_client 40c3917,
   on AtomVM 0.7 -- are taken for the current connection, so the agent joins
   with the transport a device was built with, not only a newer one.
+- A socket closed for a download no longer reconnects on its old
+  transport's `closed`, which the pid alias above let through: the second TLS
+  session ran a board without PSRAM out of memory halfway through.
 - `network_interface` may be a function, asked on each join and download,
   for a device that moves between networks without restarting the agent.
 - A status update made while the socket is closed for a download (`started`,
