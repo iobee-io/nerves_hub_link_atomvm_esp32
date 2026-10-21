@@ -24,20 +24,27 @@ close(Port) ->
     catch port_close(Port),
     ok.
 
-start() ->
+start() -> start(#{}).
+
+start(Extra) ->
     flush(),
     case erlang:process_info(self(), registered_name) of
         {registered_name, Name} -> unregister(Name);
         _ -> ok
     end,
     register(?MODULE, self()),
-    {ok, Agent} = nh_agent:start(#{
-        url => "wss://example.com/socket/websocket",
-        identifier => <<"dev-1">>,
-        transport => ?MODULE,
-        handler => self(),
-        reconnect_backoff => {10, 20}
-    }),
+    {ok, Agent} = nh_agent:start(
+        maps:merge(
+            #{
+                url => "wss://example.com/socket/websocket",
+                identifier => <<"dev-1">>,
+                transport => ?MODULE,
+                handler => self(),
+                reconnect_backoff => {10, 20}
+            },
+            Extra
+        )
+    ),
     receive
         {opened, _Port} -> ok
     after 1000 -> erlang:error(never_opened)
@@ -87,6 +94,54 @@ a_reconnect_takes_the_new_connections_pid_test() ->
     end,
     Agent ! {websocket, spawn(fun() -> ok end), connected},
     [_, _, <<"device">>, <<"phx_join">>, _] = json:decode(sent()),
+
+    nh_agent:stop(Agent),
+    unregister(?MODULE).
+
+%% Closed for a download, the old connection's own `closed' -- tagged with the
+%% pid it went by -- must not bring the socket back while the download runs:
+%% on a board without PSRAM that second TLS session ran it out of memory.
+a_close_for_a_download_does_not_reconnect_on_its_closed_test() ->
+    Agent = start(#{updater => nh_ota_slow, keep_open_above => never}),
+    Tag = spawn(fun() -> ok end),
+    Agent ! {websocket, Tag, connected},
+    [JoinRef, Ref | _] = json:decode(sent()),
+    Reply = [
+        JoinRef,
+        Ref,
+        <<"device">>,
+        <<"phx_reply">>,
+        #{<<"status">> => <<"ok">>, <<"response">> => #{}}
+    ],
+    Agent ! {websocket, Tag, {text, iolist_to_binary(json:encode(Reply))}},
+    Update = [
+        JoinRef,
+        null,
+        <<"device">>,
+        <<"update">>,
+        #{
+            <<"update_available">> => true,
+            <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+            <<"size">> => 1024,
+            <<"checksum">> => <<"abc">>
+        }
+    ],
+    Agent ! {websocket, Tag, {text, iolist_to_binary(json:encode(Update))}},
+    receive
+        {nerves_hub, {download_socket, closed, _}} -> ok
+    after 1000 -> erlang:error(never_closed)
+    end,
+
+    Agent ! {websocket, Tag, {closed, normal}},
+    %% Opened again only once the download is armed (nh_ota_slow: ~0.5 s).
+    receive
+        {opened, _} -> ok
+    after 2000 -> erlang:error(never_reopened)
+    end,
+    receive
+        {nerves_hub, {update_ready, _}} -> ok
+    after 0 -> erlang:error(reopened_before_the_download_was_done)
+    end,
 
     nh_agent:stop(Agent),
     unregister(?MODULE).

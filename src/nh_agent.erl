@@ -364,7 +364,12 @@ disconnect(#{transport := Transport, handle := Handle} = State0) ->
         State1,
         [heartbeat, connect_timeout, extensions_fallback, log_flush, rejoin]
     ),
-    State2#{
+    %% The alias goes with the handle: a `closed' the old transport sends
+    %% afterwards, tagged with it, is from a connection already given up on,
+    %% and must not start a reconnect -- during a download, a second TLS
+    %% session a board without PSRAM has no room for.
+    State3 = maps:remove(handle_alias, State2),
+    State3#{
         handle => undefined,
         socket_up => false,
         channel => nh_channel:disconnected(maps:get(channel, State2)),
