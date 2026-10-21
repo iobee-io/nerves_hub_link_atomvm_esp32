@@ -263,7 +263,12 @@ open(#{transport := Transport, config := Config} = State) ->
             case Transport:open(transport_config(Config, Url)) of
                 {ok, Handle} ->
                     Deadline = maps:get(connect_timeout_ms, Config, ?DEFAULT_CONNECT_TIMEOUT_MS),
-                    {ok, set_timer(connect_timeout, Deadline, State#{handle => Handle})};
+                    {ok,
+                        set_timer(
+                            connect_timeout,
+                            Deadline,
+                            maps:remove(handle_alias, State#{handle => Handle})
+                        )};
                 {error, _} = Error ->
                     Error
             end;
@@ -312,8 +317,20 @@ loop(State) ->
 %% Anything from a handle that is not the current one is from a connection
 %% already given up on, and a late `closed' from it must not tear down the one
 %% that replaced it.
+%%
+%% Before nerves-hub/atomvm_websocket_client 40c3917 its port tagged every
+%% event with a pid rather than the port `open_port' returned, and on AtomVM
+%% 0.7 a pid never equals a port: nothing would ever match. So the first pid
+%% to speak for a port handle is taken as that connection's name, and only
+%% for that connection. A transport that tags with its handle never needs it.
 socket_event(Handle, Event, #{handle := Handle} = State) ->
     socket_event(Event, State);
+socket_event(Alias, Event, #{handle_alias := Alias} = State) ->
+    socket_event(Event, State);
+socket_event(Tag, Event, #{handle := Handle} = State) when
+    is_port(Handle), is_pid(Tag), not is_map_key(handle_alias, State)
+->
+    socket_event(Event, State#{handle_alias => Tag});
 socket_event(_Stale, _Event, State) ->
     State.
 
