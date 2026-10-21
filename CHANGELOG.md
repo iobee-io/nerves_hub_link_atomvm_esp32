@@ -10,7 +10,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A download whose connection goes quiet (`resume_after_ms`, 10 s by default),
   fails or closes short reconnects and asks for the rest, `Range: bytes=N-`; it
   fails once `resumes` connections in a row (3) brought no new byte, so a slow
-  link may take as many connections as it needs. Over a cellular modem
+  link may take as many connections as it needs. After one that brought
+  nothing it waits `resume_after_ms` times the count before the next, so a
+  modem with no route for a few seconds, failing every connect at once, does
+  not spend them all in a fraction of a second. Over a cellular modem
   connections stopped carrying data after 40–75 s, and the update failed. The
   connection is read by a process of its own, stopped before the next one
   connects. The owner hears `{download_resumed, Offset}`; a resume counts as

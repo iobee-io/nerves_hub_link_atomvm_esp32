@@ -190,7 +190,11 @@ fetch(Slot, Parsed, Size, Checksum, Progress, Opts) ->
 %% telling `resumed' the byte it resumed from. It gives up once `resumes'
 %% connections in a row (3 by default) brought no new byte: one that brought
 %% any starts the count again, since a slow link can take several connections
-%% to carry an archive. The sha256 at the end still covers the whole archive.
+%% to carry an archive. After one that brought nothing it waits before the
+%% next, `resume_after_ms' times the count: a modem with no route for a few
+%% seconds fails every connect at once, and would otherwise spend all of
+%% `resumes' in a fraction of a second. The sha256 at the end still covers the
+%% whole archive.
 %% The reader is stopped before the next one connects: a board without PSRAM
 %% may have room for one TLS session, not two.
 -define(RESUME_AFTER_MS, 10000).
@@ -239,6 +243,7 @@ resume(R, Error, State) ->
     case Stuck1 < maps:get(resumes, Opts, ?RESUMES) of
         true ->
             _ = (maps:get(resumed, Opts, fun(_Offset) -> ok end))(Received),
+            _ = timer:sleep(Stuck1 * maps:get(resume_after_ms, Opts, ?RESUME_AFTER_MS)),
             Next = State#{resumes => Resumes + 1, since => Received, stuck => Stuck1},
             recv_loop(start_reader(Next), Next);
         false ->

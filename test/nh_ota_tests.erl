@@ -190,7 +190,7 @@ a_refused_connection_is_an_error_not_a_crash_test() ->
     ok = nh_ota_fake_http:fail_connect(),
     ok = nh_ota_fake_flash:expect(#{}),
 
-    Result = nh_ota:apply_update(payload(body()), opts(#{})),
+    Result = nh_ota:apply_update(payload(body()), opts(#{resume_after_ms => 10})),
 
     cleanup(ok),
     ?assertMatch({error, {connect_failed, _}}, Result).
@@ -269,14 +269,19 @@ a_refused_connection_is_tried_again_test() ->
     ok = nh_ota_fake_http:fail_connect(),
     ok = nh_ota_fake_flash:expect(#{}),
     Self = self(),
-    Opts = opts(#{resumed => fun(At) -> Self ! {resumed, At} end}),
+    Opts = opts(#{resume_after_ms => 50, resumed => fun(At) -> Self ! {resumed, At} end}),
 
+    Started = erlang:monotonic_time(millisecond),
     Result = nh_ota:apply_update(payload(body()), Opts),
+    Took = erlang:monotonic_time(millisecond) - Started,
 
     cleanup(ok),
     ?assertMatch({error, {connect_failed, _}}, Result),
     %% Three connections that brought nothing: the first and two resumes.
-    ?assertEqual([0, 0], resumed()).
+    ?assertEqual([0, 0], resumed()),
+    %% A connect that fails at once is not tried again at once (#27 in
+    %% iobee_bee): 50 ms after the first, 100 ms after the second.
+    ?assert(Took >= 150).
 
 %% ------------------------------------------------------- pending/commit/revert
 
