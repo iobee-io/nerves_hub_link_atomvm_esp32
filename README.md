@@ -205,9 +205,10 @@ connecting or every signature is decades stale. `start/1` refuses with
 | `heartbeat_ms` | 30000 | |
 | `reconnect_backoff` | `{1000, 60000}` | First and longest wait between reconnects, in ms |
 | `firmware_trial` | `#{boot_attempts => 3, join_timeout_ms => 300000}` | Or `off`. See [on trial](#on-trial) |
-| `network_interface` | `<<"wlan0">>` | What the device reports it connects over |
+| `network_interface` | `<<"wlan0">>` | What the device reports it connects over, or a function asked on each join |
 | `log_flush_ms` | 10000 | How long batched log lines wait |
 | `log_buffer` | 100 | Log lines held before the oldest are dropped |
+| `ping_interval_ms` | the transport's | WebSocket pings; the IDF's are every 10 s |
 | `transport` | `websocket_client` | |
 
 ## Updates
@@ -222,14 +223,19 @@ running archive is never overwritten, so a refused or corrupt download leaves
 the device running what it had.
 
 NervesHub hears how it goes as it goes: `received` when the update is accepted,
-`started` as each download attempt begins, progress while it downloads,
-`completed` once it is armed, and `failed` with a reason if it is not.
+`started` as each connection of the download begins, progress while it
+downloads, `completed` once it is armed, and `failed` with a reason if it is
+not. While the socket is closed for the download (see `keep_open_above`), what
+it would have heard is sent once the device has joined again.
 
-A download that drops part way is resumed from the last byte received, with a
-`Range` request, up to five more times with a growing pause between. Only a
-failure another attempt would not fix, such as a 404 or a flash write that
-failed, ends it at once. A download that goes two minutes without a byte is
-given up on, since the HTTP client has no timeout of its own.
+A download is read with a deadline, `resume_after_ms` (10 s): a connection
+that goes quiet, fails or closes short is dropped, and the rest asked for with
+a `Range` request. It gives up only once `resumes` connections in a row (3)
+brought no new byte, waiting `resume_after_ms` times that count before each, so
+a slow link that keeps moving takes as many connections as it needs and a few
+seconds without a route do not end it. A 5xx counts as a connection that
+brought nothing; a 404 or a flash write that failed ends it at once. Over a
+cellular modem this took downloads that stopped every 40 to 75 s through.
 
 ### Deciding for yourself
 
@@ -354,8 +360,33 @@ restart the device every time it connected.
 
 ## Extensions
 
-`extensions => all` attaches the three NervesHub extensions: `health` reports
-memory and uptime, `geo` reports a location, and `logging` carries log lines.
+`extensions => all` attaches the four NervesHub extensions: `health` reports
+memory and uptime, `geo` reports a location, `logging` carries log lines, and
+`alarms` sends the application's alarms as they are raised and cleared.
+
+### Alarms
+
+`alarms => Fun` returns the complete set raised right now, `#{Name =>
+Description}`. Without the `alarms` extension it goes on the health report,
+which NervesHub asks for hourly on an idle device. With it, the agent calls
+`Fun` every `alarms_interval_ms` (30 s by default) and sends only what changed,
+stamped with the time the alarm appeared; `nh_ext_alarms` has the details.
+
+A `Fun` of one argument is given what it returned last time, so an alarm can
+clear at a different level from the one that raised it:
+
+```erlang
+alarms => fun(Raised) ->
+    Block = erlang:system_info(esp32_largest_free_block),
+    Limit = case maps:is_key(<<"LowMemory">>, Raised) of true -> 36000; false -> 32768 end,
+    case Block < Limit of
+        true -> #{<<"LowMemory">> => <<"heap fragmented">>};
+        false -> #{}
+    end
+end
+```
+
+Keep descriptions stable: a new description is sent as the alarm raised again.
 
 After the device joins, NervesHub says which versions of each it speaks and the
 device joins with the newest both know. An operator can turn one off or on
@@ -523,7 +554,7 @@ is the one it uses on a device.
 | Health, geo and logging extensions | ✅ |
 | `identify` and `reboot` | ✅ |
 | Reconnecting with fresh signatures | tested against fakes only |
-| Resuming a dropped download | tested against fakes only |
+| Resuming a dropped download | ✅ over a cellular modem, connections stopping every 40–75 s |
 | Reverting firmware that does not join | tested against fakes only |
 | Support scripts | tested against fakes only |
 | Device-managed updates | tested against fakes only |

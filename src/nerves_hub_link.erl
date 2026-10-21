@@ -90,6 +90,10 @@
 %% has no shell, so this answers it with a debug terminal instead — a fixed set
 %% of commands, listed by `help'. See `nh_console'.
 %%
+%% `console_commands' adds the application's own, as `{Name, Description,
+%% Fun}', or `{Section, Name, Description, Fun}' to list it under a section of
+%% `help': `Fun' gets the line's arguments and returns the output.
+%%
 %% It reports, and it reboots. It will not evaluate Erlang, and it is not a way
 %% in to a running system.
 %%
@@ -144,7 +148,9 @@
 %% process and everything it starts afterwards print is forwarded as well as
 %% shown on the console. The text arrives unstructured, at one level, timed on
 %% arrival -- there is no level or module in an `io:format' call to carry over.
-%% ESP-IDF's own `I (1234) wifi: ...' lines are written from C and are not
+%% With `register', the capture sends to that name and is registered itself as
+%% `nh_io_capture': an agent started again under the name reuses it rather than
+%% leaving a capture behind per restart. ESP-IDF's own `I (1234) wifi: ...' lines are written from C and are not
 %% caught by anything here.
 %%
 %% One thing to change when turning it on: `logger' runs its handlers in the
@@ -184,6 +190,13 @@
 %% offers, into the slot the device is not running, and reports
 %% `{update_ready, Slot}' when it is armed. Rebooting is left to the
 %% application. `updates => manual' reports the message and does nothing else.
+%%
+%% The socket is closed while an update downloads, so an ESP32 without PSRAM
+%% has the heap for the download's TLS session. `keep_open_above => Bytes'
+%% keeps it open when the largest free block is at least `Bytes' as the
+%% download starts: the device stays online and reports progress. See
+%% `nh_agent'. `before_update => Fun' runs first, to free memory for the
+%% download (the application's own TLS connections, say).
 %%
 %% == Firmware description ==
 %%
@@ -231,7 +244,9 @@
     client_cert => {binary(), binary()},
     verify => crt_bundle | {cacert_pem, binary()} | none,
     console => boolean(),
+    console_commands => [nh_console:command()],
     extensions => all | [health | geo | logging],
+    alarms => fun(() -> #{binary() => binary()}),
     reboot => auto | manual,
     updates => auto | manual,
     firmware_keys => [binary() | string()],
@@ -245,6 +260,9 @@
     register => atom(),
     handler => pid(),
     heartbeat_ms => pos_integer(),
+    ping_interval_ms => pos_integer(),
+    keep_open_above => non_neg_integer(),
+    before_update => fun(() -> ok),
     transport => module()
 }.
 
@@ -478,12 +496,27 @@ with_agent_config(Config, Start) ->
 capture_io(Config, Agent) ->
     case maps:get(capture_io, Config, false) of
         false -> ok;
-        true -> capture(#{agent => Agent});
-        Options when is_map(Options) -> capture(Options#{agent => Agent})
+        true -> capture(#{}, Config, Agent);
+        Options when is_map(Options) -> capture(Options, Config, Agent)
     end.
 
-capture(Options) ->
-    {ok, Capture} = nh_io_capture:start(Options),
+%% A registered agent is captured by its name, through one capture for the
+%% device. An agent started again under the same name finds it there, so the
+%% processes that inherited it keep reaching the new agent, and no capture is
+%% left behind sending to a dead one.
+capture(Options, #{register := Name}, _Agent) ->
+    Capture =
+        case whereis(nh_io_capture) of
+            undefined ->
+                {ok, Pid} = nh_io_capture:start(Options#{agent => Name}),
+                true = register(nh_io_capture, Pid),
+                Pid;
+            Pid ->
+                Pid
+        end,
+    nh_io_capture:attach(Capture);
+capture(Options, _Config, Agent) ->
+    {ok, Capture} = nh_io_capture:start(Options#{agent => Agent}),
     nh_io_capture:attach(Capture).
 
 validate(Config) ->

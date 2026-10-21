@@ -46,6 +46,40 @@
 %% concern would not work: a steady stream of incoming messages would keep
 %% pushing every timeout out, and a device would stop heartbeating while it
 %% looked busy and healthy.
+%%
+%% == Updates ==
+%%
+%% The socket is closed while an update downloads and reopened afterwards. An
+%% ESP32 without PSRAM may have room for one TLS session, not two: the
+%% download's handshake can leave too little heap for the next record on either
+%% connection. What the download had to tell NervesHub while the socket was
+%% closed -- that it started, completed or failed -- goes once the device has
+%% joined again.
+%%
+%% `keep_open_above => Bytes' keeps the socket open instead when, as the
+%% download starts, the largest free block of heap is at least `Bytes' -- room
+%% for both sessions. The device then stays online, reports progress, and a
+%% failure goes back at once; then it reconnects, since NervesHub only offers
+%% an update again on a join. `never' closes it whatever the heap.
+%%
+%% The owner hears `{download_socket, open | closed, LargestFreeBlock}' as the
+%% download starts. As the download ends, done, failed or stalled, it hears
+%% `{download_pause, Ms}': the longest it went without progress, to tell a slow
+%% link from one that stops now and then. A download that resumes (see
+%% `nh_ota') makes it hear `{download_resumed, Offset}', the byte it resumed
+%% from; a resume counts as progress.
+%%
+%% `before_update => Fun' is called before any of this, so the application can
+%% free memory first (its own TLS connections, say); it hears `update_failed'
+%% if the update does not happen. A platform that does not report its heap (not an
+%% ESP32) has no such limit and always keeps it open.
+%%
+%% == Alarms ==
+%%
+%% With the `alarms' extension enabled and an `alarms => Fun', the agent asks
+%% the application for its alarms every `alarms_interval_ms' (30 s by default)
+%% and sends what changed; see `nh_ext_alarms'. It keeps asking while offline,
+%% so an alarm raised then keeps the time it was raised.
 %% @end
 %%-----------------------------------------------------------------------------
 -module(nh_agent).
@@ -54,6 +88,7 @@
 
 %% Exported so a supervisor or a test can run the loop directly.
 -export([init/2, loop/1]).
+-export([keep_open/2]).
 
 %% What this agent tells NervesHub it speaks. 2.4.0 is the version that brings
 %% device-managed updates; below 2.1.0 NervesHub types support scripts into the
@@ -91,6 +126,20 @@
 %% Replies to extension pushes are matched by reference; this many are kept.
 -define(EXT_REFS_KEPT, 16).
 
+%% How long to wait for the closed socket's transport to be gone before a
+%% download starts, and how long to then idle so its memory comes back. See
+%% close_for_download/1.
+-define(GONE_TIMEOUT_MS, 5000).
+-define(RECLAIM_MS, 200).
+
+%% How long a failure's report gets to leave before the socket that stayed
+%% open reconnects, so that NervesHub offers the update again.
+-define(REJOIN_MS, 1000).
+%% Console output goes up in pieces of at most this many bytes (`nh_console:chunks/2`).
+-define(CONSOLE_CHUNK, 256).
+
+-define(DEFAULT_ALARMS_INTERVAL_MS, 30000).
+
 -type config() :: #{
     url => binary() | string(),
     host => binary() | string(),
@@ -103,10 +152,17 @@
     handler => pid(),
     heartbeat_ms => pos_integer(),
     reconnect_backoff => {pos_integer(), pos_integer()},
-    network_interface => binary(),
+    %% A function is asked on each join and download, for a device that
+    %% changes network without restarting the agent.
+    network_interface => binary() | fun(() -> binary()),
     firmware_trial => #{boot_attempts => pos_integer(), join_timeout_ms => pos_integer()} | off,
     log_flush_ms => pos_integer(),
-    log_buffer => pos_integer()
+    log_buffer => pos_integer(),
+    keep_open_above => non_neg_integer() | never,
+    before_update => fun(() -> ok),
+    alarms_interval_ms => pos_integer(),
+    download_idle_ms => pos_integer(),
+    ping_interval_ms => pos_integer()
 }.
 
 -export_type([config/0]).
@@ -170,8 +226,10 @@ init(Config, Owner) ->
         updates => maps:get(updates, Config, auto),
         firmware_keys => stash_keys(maps:get(firmware_keys, Config, [])),
         reboot => maps:get(reboot, Config, auto),
-        console => nh_console:new(),
+        console => nh_console:new(maps:get(console_commands, Config, [])),
         extensions => Extensions,
+        %% Status updates made while the socket was closed for a download.
+        deferred => [],
         log_buffer => nh_log_buffer:new(maps:get(log_buffer, Config, ?DEFAULT_LOG_BUFFER)),
         ext_refs => [],
         heartbeat_ms => maps:get(heartbeat_ms, Config, ?DEFAULT_HEARTBEAT_MS),
@@ -182,7 +240,7 @@ init(Config, Owner) ->
         timers => #{}
     },
 
-    State1 = begin_trial(State0),
+    State1 = schedule_alarms(begin_trial(State0)),
     Channel = maybe_add_extensions(
         maybe_add_console(nh_channel:new(join_params(State1)), Config), Extensions
     ),
@@ -282,23 +340,29 @@ socket_event({error, Reason}, State) ->
 %% The join is gone with the socket, but the channel is not rebuilt: that would
 %% restart reference numbering and drop the join parameters, so a reconnected
 %% device would report no firmware at all.
-lost(Why, #{transport := Transport, handle := Handle} = State0) ->
-    notify(State0, Why),
+lost(Why, State) ->
+    notify(State, Why),
+    schedule_reconnect(disconnect(State)).
+
+%% Closed, whether it was lost or closed on purpose for a download.
+disconnect(#{handle := undefined} = State) ->
+    State;
+disconnect(#{transport := Transport, handle := Handle} = State0) ->
     _ = Transport:close(Handle),
     State1 = fail_requests(disconnected, State0),
     State2 = lists:foldl(
         fun cancel_timer/2,
         State1,
-        [heartbeat, connect_timeout, extensions_fallback, log_flush]
+        [heartbeat, connect_timeout, extensions_fallback, log_flush, rejoin]
     ),
-    schedule_reconnect(State2#{
+    State2#{
         handle => undefined,
         socket_up => false,
         channel => nh_channel:disconnected(maps:get(channel, State2)),
         %% Nothing is attached without a channel to be attached on. Log lines
         %% are held until the next join says where they can go.
         extensions => nh_extensions:disconnected(maps:get(extensions, State2))
-    }).
+    }.
 
 schedule_reconnect(#{config := Config, reconnect_attempt := Attempt} = State) ->
     {Min, Max} = maps:get(reconnect_backoff, Config, ?DEFAULT_RECONNECT_BACKOFF),
@@ -331,6 +395,11 @@ fire(trial_deadline, State) ->
     trial_expired(State);
 fire(update_idle, State) ->
     update_stalled(State);
+fire(poll_alarms, State) ->
+    {Extensions, Actions} = nh_extensions:poll_alarms(maps:get(extensions, State)),
+    schedule_alarms(run_extension_actions(Actions, State#{extensions => Extensions}));
+fire(rejoin, State) ->
+    reopen(close_for_download(State));
 fire({request, Kind}, State) ->
     reply_request(Kind, {error, timeout}, State);
 fire({script, Ref}, State) ->
@@ -379,6 +448,13 @@ run_action({send, Frame}, State) ->
                     State;
                 {error, Reason} ->
                     notify(State, {send_failed, Reason}),
+                    State;
+                %% atomvm_websocket_client's port answered a bare
+                %% `not_connected' (or `send_failed') rather than the
+                %% `{error, _}' it documents, before nerves-hub/
+                %% atomvm_websocket_client#3.
+                Reason ->
+                    notify(State, {send_failed, Reason}),
                     State
             end
     end;
@@ -390,7 +466,7 @@ run_action({event, Event}, State) ->
 %% reported by name.
 handle_event({joined, <<"device">>, Response}, State) ->
     notify(State, {joined, Response}),
-    State1 = validate_pending(State),
+    State1 = send_deferred(validate_pending(State)),
     State2 = push_event(
         <<"report_network_interface">>, #{<<"interface">> => network_interface(State1)}, State1
     ),
@@ -578,17 +654,23 @@ ota_opts(#{esp := Esp}) -> #{esp => Esp}.
 update_offered(Payload, State) ->
     Available = maps:get(<<"update_available">>, Payload, false) =:= true,
     Requested = maps:is_key(request_update, maps:get(requests, State)),
-    Busy = maps:is_key(update, State),
+    %% Armed counts as busy until the reboot. The socket reopens once the update
+    %% is written, and NervesHub, still seeing the old firmware, offers it again.
+    %% Downloading that would write into the other slot -- which by then is the
+    %% previous firmware, the one a failed update needs to go back to.
+    Busy = maps:is_key(update, State) orelse maps:is_key(armed, State),
 
     case {Available, Busy, Requested orelse maps:get(updates, State, auto) =:= auto} of
         {false, _, _} ->
             State;
         {true, true, _} ->
-            %% One at a time. A second `update' while a download is in flight
-            %% is the server repeating itself, not a new job.
+            %% One at a time. A second `update' while a download is in flight,
+            %% or once one is armed, is the server repeating itself, not a new
+            %% job.
             State;
         {true, false, true} ->
-            reply_request(request_update, ok, start_update(Payload, State));
+            %% Answered first: the socket may close for the download.
+            start_update(Payload, reply_request(request_update, ok, State));
         {true, false, false} ->
             State
     end.
@@ -605,13 +687,133 @@ update_decision({reschedule, DelayMs, Reason}, State) ->
 
 start_update(Payload, State0) ->
     State = status_update(<<"received">>, #{}, State0),
-    Pid = nh_ota:start_update(Payload, self(), #{keys => maps:get(firmware_keys, State, [])}),
-    notify(State, {update_started, Pid}),
-    download_alive(State#{update => Pid}).
+    ok = before_update(State),
+    State1 = make_room_for_download(State),
+    Updater = maps:get(updater, maps:get(config, State1), nh_ota),
+    Pid = Updater:start_update(Payload, self(), #{keys => maps:get(firmware_keys, State1, [])}),
+    notify(State1, {update_started, Pid}),
+    Now = now_ms(),
+    download_alive(State1#{update => Pid, progress_at => Now, longest_pause => 0}).
 
-%% Everything the downloader says is a sign it is still getting somewhere.
-download_alive(#{config := Config} = State) ->
-    set_timer(update_idle, maps:get(download_idle_ms, Config, ?DEFAULT_DOWNLOAD_IDLE_MS), State).
+%% Everything the downloader says is a sign it is still getting somewhere. The
+%% longest wait between two of them is reported as the download ends.
+download_alive(#{config := Config, progress_at := At} = State) ->
+    Now = now_ms(),
+    Longest = max(Now - At, maps:get(longest_pause, State, 0)),
+    set_timer(
+        update_idle,
+        maps:get(download_idle_ms, Config, ?DEFAULT_DOWNLOAD_IDLE_MS),
+        State#{progress_at => Now, longest_pause => Longest}
+    ).
+
+%% Up to now: a download that ends, or stalls, after a long pause counts it.
+report_pause(#{progress_at := At} = State) ->
+    Pause = max(now_ms() - At, maps:get(longest_pause, State, 0)),
+    notify(State, {download_pause, Pause});
+report_pause(_State) ->
+    ok.
+
+%% The application's chance to free memory for the download (stop its own TLS
+%% connections, say) before the heap is measured and the download starts. It
+%% hears `update_failed' if the update does not happen, to start them again.
+before_update(#{config := #{before_update := Fun}}) ->
+    ok = Fun();
+before_update(_State) ->
+    ok.
+
+%% The owner hears which it was, and the largest block it was decided on: with
+%% the socket closed nothing of the download reaches NervesHub, so that is the
+%% application's to keep until it is back.
+make_room_for_download(#{config := Config} = State) ->
+    Largest = largest_free_block(),
+    case keep_open(maps:get(keep_open_above, Config, undefined), Largest) of
+        true ->
+            notify(State, {download_socket, open, Largest}),
+            State;
+        false ->
+            notify(State, {download_socket, closed, Largest}),
+            close_for_download(State)
+    end.
+
+%% @private Exported for tests: a host has no ESP32 heap to measure.
+keep_open(undefined, _Largest) -> false;
+keep_open(never, _Largest) -> false;
+keep_open(_Min, undefined) -> true;
+keep_open(Min, Largest) -> Largest >= Min.
+
+largest_free_block() ->
+    try
+        erlang:system_info(esp32_largest_free_block)
+    catch
+        _:_ -> undefined
+    end.
+
+%% The socket is closed so the download can have its memory, and on an ESP32
+%% without PSRAM it needs all of it: the download's TLS handshake takes nearly
+%% every free byte. But closing returns before that memory is back. The port is
+%% destroyed a moment later, and the port telling this process it has gone
+%% needs a few bytes of its own -- which, once the handshake has started, are
+%% not there: "Cannot handle out of memory", abort, reboot, and the server
+%% offers the update again. Seen 13 and 19 times in a row before one got
+%% through.
+%%
+%% So: wait for the transport to be gone (its 'DOWN'), then sleep briefly.
+%% Sleeping idles the scheduler, which is what lets FreeRTOS's idle task free
+%% the stack of the task the WebSocket client ran on; a task that deletes
+%% itself is only reclaimed there. A handle that is neither a port nor a pid
+%% (a test's) has nothing to wait for. Closed on purpose, so nothing
+%% reconnects: `reopen/1' does, once the download is over.
+close_for_download(#{handle := undefined} = State) ->
+    State;
+close_for_download(#{handle := Handle} = State) ->
+    Monitor = monitor_handle(Handle),
+    State1 = disconnect(State),
+    await_gone(Monitor),
+    timer:sleep(?RECLAIM_MS),
+    State1.
+
+monitor_handle(Handle) when is_port(Handle) -> erlang:monitor(port, Handle);
+monitor_handle(Handle) when is_pid(Handle) -> erlang:monitor(process, Handle);
+monitor_handle(_Handle) -> undefined.
+
+await_gone(undefined) ->
+    ok;
+await_gone(Monitor) ->
+    receive
+        {'DOWN', Monitor, _Type, _Object, _Reason} -> ok
+    after ?GONE_TIMEOUT_MS ->
+        erlang:demonitor(Monitor, [flush]),
+        ok
+    end.
+
+%% Joining again is left to `connected', as on any other connection. One that
+%% does not open is retried like any lost connection.
+reopen(#{handle := undefined} = State) ->
+    reconnect(State#{reconnect_attempt => 0});
+reopen(State) ->
+    State.
+
+%% Made while the socket is closed for a download, a status update waits for
+%% the next join; NervesHub would not hear it otherwise.
+status_update(Status, Extra, State) ->
+    Payload = Extra#{<<"status">> => Status},
+    case
+        maps:get(handle, State) =/= undefined andalso nh_channel:joined(maps:get(channel, State))
+    of
+        true -> push_event(<<"status_update">>, Payload, State);
+        false -> State#{deferred => maps:get(deferred, State, []) ++ [Payload]}
+    end.
+
+send_deferred(#{deferred := []} = State) ->
+    State;
+send_deferred(#{deferred := Deferred} = State) ->
+    lists:foldl(
+        fun(Payload, Acc) -> push_event(<<"status_update">>, Payload, Acc) end,
+        State#{deferred => []},
+        Deferred
+    );
+send_deferred(State) ->
+    State.
 
 updater_message(Pid, Message, #{update := Pid} = State) ->
     updater(Message, State);
@@ -624,6 +826,10 @@ updater(started, State) ->
             <<"started">>, #{<<"downloader_network_interface">> => network_interface(State)}, State
         )
     );
+%% Nowhere to send progress while the socket is closed for the download, and
+%% no point keeping it for later.
+updater({progress, _Percent}, #{handle := undefined} = State) ->
+    download_alive(State);
 updater({progress, Percent}, State) ->
     download_alive(
         push_event(
@@ -632,13 +838,17 @@ updater({progress, Percent}, State) ->
             State
         )
     );
+updater({resumed, Offset}, State) ->
+    notify(State, {download_resumed, Offset}),
+    download_alive(State);
 updater({ok, Slot}, State) ->
     %% Written and armed, not yet running. Rebooting is the application's
     %% call: it may have work to finish first, and a library that restarts a
     %% device on its own is a library that surprises someone.
+    report_pause(State),
     notify(State, {update_ready, Slot}),
     State1 = status_update(<<"completed">>, #{}, State),
-    cancel_timer(update_idle, maps:remove(update, State1));
+    reopen(cancel_timer(update_idle, maps:remove(update, State1#{armed => Slot})));
 updater({error, Reason}, State) ->
     update_failed(Reason, describe(Reason), State).
 
@@ -648,13 +858,21 @@ update_stalled(#{update := Pid} = State) ->
 update_stalled(State) ->
     State.
 
+%% Reported now if the socket stayed open and joined; otherwise on the next join.
+%%
+%% NervesHub offers an update again only when the device joins again. With
+%% the socket closed for the download, reopening it is that join; with it kept
+%% open, nothing would ever ask again, so it reconnects once the report has
+%% had time to leave.
 update_failed(Reason, Described, State) ->
+    report_pause(State),
     notify(State, {update_failed, Reason}),
     State1 = status_update(<<"failed">>, #{<<"reason">> => Described}, State),
-    cancel_timer(update_idle, maps:remove(update, State1)).
-
-status_update(Status, Extra, State) ->
-    push_event(<<"status_update">>, Extra#{<<"status">> => Status}, State).
+    State2 = cancel_timer(update_idle, maps:remove(update, State1)),
+    case maps:get(handle, State2) of
+        undefined -> reopen(State2);
+        _Open -> set_timer(rejoin, ?REJOIN_MS, State2)
+    end.
 
 %% A downloader that exits normally has already sent its result. One that dies
 %% any other way has not, and nothing else would ever say so.
@@ -823,6 +1041,15 @@ script_error(Ref, Reason, Output, State) ->
 
 %% --------------------------------------------------------------- extensions
 
+schedule_alarms(#{config := Config, extensions := Extensions} = State) ->
+    case nh_extensions:polls_alarms(Extensions) of
+        true ->
+            Ms = maps:get(alarms_interval_ms, Config, ?DEFAULT_ALARMS_INTERVAL_MS),
+            set_timer(poll_alarms, Ms, State);
+        false ->
+            State
+    end.
+
 maybe_add_extensions(Channel, Extensions) ->
     case nh_extensions:enabled(Extensions) of
         [] ->
@@ -988,14 +1215,20 @@ maybe_add_console(Channel, Config) ->
     end.
 
 %% Console output only goes anywhere if the channel joined, and `push/4'
-%% already refuses on a topic that has not.
+%% already refuses on a topic that has not. In pieces: see `nh_console:chunks/2'.
 console_out(<<>>, State) ->
     State;
 console_out(Output, State) ->
-    {Channel, Actions} = nh_channel:push(
-        <<"console">>, <<"up">>, #{<<"data">> => Output}, maps:get(channel, State)
-    ),
-    run(Actions, State#{channel => Channel}).
+    lists:foldl(
+        fun(Chunk, Acc) ->
+            {Channel, Actions} = nh_channel:push(
+                <<"console">>, <<"up">>, #{<<"data">> => Chunk}, maps:get(channel, Acc)
+            ),
+            run(Actions, Acc#{channel => Channel})
+        end,
+        State,
+        nh_console:chunks(Output, ?CONSOLE_CHUNK)
+    ).
 
 %% ------------------------------------------------------------------ helpers
 
@@ -1055,7 +1288,10 @@ now_ms() ->
     erlang:system_time(millisecond).
 
 network_interface(#{config := Config}) ->
-    maps:get(network_interface, Config, ?DEFAULT_NETWORK_INTERFACE).
+    case maps:get(network_interface, Config, ?DEFAULT_NETWORK_INTERFACE) of
+        Fun when is_function(Fun, 0) -> Fun();
+        Interface -> Interface
+    end.
 
 %% What the device reports about itself on every join: its firmware, which
 %% protocol version it speaks, whether that firmware has proved itself, and
@@ -1111,7 +1347,13 @@ transport_config(Config, Url) ->
                 Base
         end,
 
-    case maps:get(client_cert, Config, undefined) of
-        undefined -> WithAuth;
-        CertAndKey -> WithAuth#{client_cert => CertAndKey}
+    WithCert =
+        case maps:get(client_cert, Config, undefined) of
+            undefined -> WithAuth;
+            CertAndKey -> WithAuth#{client_cert => CertAndKey}
+        end,
+
+    case maps:get(ping_interval_ms, Config, undefined) of
+        undefined -> WithCert;
+        Ms -> WithCert#{ping_interval_ms => Ms}
     end.
