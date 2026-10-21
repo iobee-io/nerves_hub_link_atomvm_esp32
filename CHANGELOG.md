@@ -26,6 +26,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`nerves_hub_link_atomvm_esp32/<version>`), so NervesHub records the client
   library of each connection. It takes an atomvm_websocket_client with the
   `user_agent` option; an older one ignores it and sends its default.
+- Events tagged with a pid for a port handle -- the C port of
+  atomvm_websocket_client before nerves-hub/atomvm_websocket_client 40c3917,
+  on AtomVM 0.7 -- are taken for the current connection, so the agent joins
+  with the transport a device was built with, not only a newer one.
 - `network_interface` may be a function, asked on each join and download,
   for a device that moves between networks without restarting the agent.
 - `ping_interval_ms => Ms` sets how often the socket sends WebSocket pings,
