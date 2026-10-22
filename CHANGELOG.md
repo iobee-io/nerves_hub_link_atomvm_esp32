@@ -24,6 +24,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A socket closed for a download no longer reconnects on its old
   transport's `closed`, which the pid alias above let through: the second TLS
   session ran a board without PSRAM out of memory halfway through.
+- Log lines no longer wait for the batch timer when the device may be about
+  to go down: a line at `error` or worse, and any line while an update
+  downloads, is sent at once, and a `reboot` sends what is waiting first.
+  `nerves_hub_link:flush_logs/2` does the same for an application restarting
+  the device on purpose. A batch still waiting went with a panic.
 - `network_interface` may be a function, asked on each join and download,
   for a device that moves between networks without restarting the agent.
 - A status update made while the socket is closed for a download (`started`,
