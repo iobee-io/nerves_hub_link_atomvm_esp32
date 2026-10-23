@@ -15,6 +15,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an application about to restart the device on purpose.
 - `{download_resumed, Offset}` to the owner for each resume, which also counts
   as progress against `download_idle_ms`.
+- `keep_open_above` closes the socket while an update downloads, unless the
+  largest free block of heap is at least that many bytes (`never`: always), and
+  reopens it afterwards. An ESP32 without PSRAM has room for one TLS session,
+  not two: with the socket open an update took 13 to 19 attempts, each ending
+  in "Cannot handle out of memory". Closing waits for the transport to be gone
+  and its memory back. Status updates made while the socket is closed are sent
+  once the device has joined again. Without the option nothing changes.
+- `before_update`, a function run before a download starts, to free memory.
 
 ### Changed
 
@@ -38,6 +46,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still waiting went with a panic. The first such line goes at once and the
   ones within the next 250 ms together after it, so a burst of errors is a
   few messages a second, inside NervesHub's limit of 5, not one per line.
+- An armed update counts as busy until the reboot: offered again before then,
+  it is not downloaded into the other slot, which by then holds the previous
+  firmware.
+- A status update made while the device is not joined (`started`, `completed`,
+  `failed`) waits for the next join, in order, rather than being dropped.
 - A download resumes for as long as connections keep bringing bytes, in place
   of five retries in all. Each connection is read with a deadline,
   `resume_after_ms` (10 s): one that goes quiet, fails or closes short is
