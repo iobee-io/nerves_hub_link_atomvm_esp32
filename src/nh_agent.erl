@@ -63,6 +63,10 @@
 %% NervesHub while the socket was closed -- that it started, completed or
 %% failed -- goes once the device has joined again.
 %%
+%% As the download ends, done, failed or stalled, the owner hears
+%% `{download_pause, Ms}': the longest it went without progress, to tell a slow
+%% link from one that stops now and then.
+%%
 %% `before_update => Fun' is called before any of this, so the application can
 %% free memory first (its own TLS connections, say); it hears `update_failed'
 %% if the update does not happen, including when `Fun' does not return `ok'.
@@ -752,7 +756,7 @@ download(Payload, State) ->
     Updater = maps:get(updater, maps:get(config, State1), nh_ota),
     Pid = Updater:start_update(Payload, self(), download_opts(State1)),
     notify(State1, {update_started, Pid}),
-    download_alive(State1#{update => Pid}).
+    download_alive(State1#{update => Pid, progress_at => now_ms(), longest_pause => 0}).
 
 %% The application's chance to free memory for the download (stop its own TLS
 %% connections, say) before the heap is measured and the download starts. It
@@ -858,9 +862,23 @@ download_opts(#{config := Config} = State) ->
             [{Opt, maps:get(Key, Config)} || {Opt, Key} <- Passed, is_map_key(Key, Config)]
     ).
 
-%% Everything the downloader says is a sign it is still getting somewhere.
-download_alive(#{config := Config} = State) ->
-    set_timer(update_idle, maps:get(download_idle_ms, Config, ?DEFAULT_DOWNLOAD_IDLE_MS), State).
+%% Everything the downloader says is a sign it is still getting somewhere. The
+%% longest wait between two of them is reported as the download ends.
+download_alive(#{config := Config, progress_at := At} = State) ->
+    Now = now_ms(),
+    Longest = max(Now - At, maps:get(longest_pause, State, 0)),
+    set_timer(
+        update_idle,
+        maps:get(download_idle_ms, Config, ?DEFAULT_DOWNLOAD_IDLE_MS),
+        State#{progress_at => Now, longest_pause => Longest}
+    ).
+
+%% Up to now: a download that ends, or stalls, after a long pause counts it.
+report_pause(#{progress_at := At} = State) ->
+    Pause = max(now_ms() - At, maps:get(longest_pause, State, 0)),
+    notify(State, {download_pause, Pause});
+report_pause(_State) ->
+    ok.
 
 updater_message(Pid, Message, #{update := Pid} = State) ->
     updater(Message, State);
@@ -893,6 +911,7 @@ updater({ok, Slot}, State) ->
     %% Written and armed, not yet running. Rebooting is the application's
     %% call: it may have work to finish first, and a library that restarts a
     %% device on its own is a library that surprises someone.
+    report_pause(State),
     notify(State, {update_ready, Slot}),
     State1 = status_update(<<"completed">>, #{}, State#{failed_updates => 0}),
     reopen(cancel_timer(update_idle, maps:remove(update, State1#{armed => Slot})));
@@ -912,6 +931,7 @@ update_stalled(State) ->
 %% it closed for the download, it opens again. Either waits
 %% `update_retry_backoff', longer with each failure in a row.
 update_failed(Reason, Described, State) ->
+    report_pause(State),
     notify(State, {update_failed, Reason}),
     State1 = status_update(<<"failed">>, #{<<"reason">> => Described}, State),
     State2 = cancel_timer(update_idle, maps:remove(update, State1)),
