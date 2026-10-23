@@ -174,6 +174,14 @@ erase(_Slot, Size, _Opts) ->
     {error, {invalid_update_size, Size}}.
 
 fetch(Slot, Parsed, Size, Checksum, Progress, Opts) ->
+    %% AtomVM's `ssl' is a gen_server that has to be started before
+    %% `connect/2,3' will do anything but crash with `{noproc, ...}' -- ours
+    %% is the only thing on this device that ever calls into it (the
+    %% NervesHub channel itself uses the C-level esp_websocket_client, not
+    %% this module), so nothing else has ever started it. Idempotent: a
+    %% second call just returns `ok'.
+    ok = ssl:start(),
+
     State = #{
         slot => Slot,
         keys => maps:get(keys, Opts, []),
@@ -294,10 +302,16 @@ stop_reader({Reader, Monitor}) ->
     end.
 
 reader(Owner, #{protocol := Protocol, host := Host, port := Port, path := Path}, Headers, Http) ->
-    %% Passive because AtomVM's `ssl' asserts `{active, false}', and verified
-    %% against the bundled CAs. A tampered archive is refused regardless:
-    %% `finish/4' checks the sha256 NervesHub sent over the device socket.
-    case Http:connect(Protocol, Host, Port, [{active, false}, {verify, verify_peer}]) of
+    %% Passive because AtomVM's `ssl' asserts `{active, false}'. Meant to be
+    %% verified against the bundled CAs, but AtomVM's ssl:process_options/3
+    %% has no clause for `{verify, verify_peer}' yet -- its own type spec
+    %% only allows `verify_none' for a client connection -- so that crashes
+    %% with a function_clause before the socket even opens. `verify_none'
+    %% until AtomVM supports peer verification on the client side. A
+    %% tampered archive is still refused: `finish/4' checks the sha256
+    %% NervesHub sent over the device socket, independent of what carried
+    %% the bytes.
+    case Http:connect(Protocol, Host, Port, [{active, false}, {verify, verify_none}]) of
         {ok, Conn} ->
             case Http:request(Conn, <<"GET">>, Path, Headers, undefined) of
                 {ok, Conn2, _Ref} ->
