@@ -110,6 +110,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `{download_resumed, Offset}` to the owner for each resume, which also counts
   as progress against `download_idle_ms`.
+- `console_commands` adds the application's own console commands, as `{Name,
+  Description, Fun}` or `{Section, Name, Description, Fun}`. `help` lists the
+  commands by section (`device`, `network`, then the application's); one with a
+  built-in's name replaces it, and one that raises prints the error.
 
 ## [0.2.0] - 2026-09-24
 
