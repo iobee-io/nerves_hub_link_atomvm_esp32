@@ -42,6 +42,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An armed update counts as busy until the reboot: offered again before then,
   it is not downloaded into the other slot, which by then holds the previous
   firmware.
+- A failed update with the socket open reconnects a second later, since
+  NervesHub offers an update again only on a join; nothing asked again before.
 - A status update made while the device is not joined (`started`, `completed`,
   `failed`) waits for the next join, in order, rather than being dropped.
 - A download resumes for as long as connections keep bringing bytes, in place
