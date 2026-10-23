@@ -644,6 +644,10 @@ updater({progress, Percent}, State) ->
             State
         )
     );
+%% The download reconnected and asked for the rest: a sign of life.
+updater({resumed, Offset}, State) ->
+    notify(State, {download_resumed, Offset}),
+    download_alive(State);
 updater({ok, Slot}, State) ->
     %% Written and armed, not yet running. Rebooting is the application's
     %% call: it may have work to finish first, and a library that restarts a
