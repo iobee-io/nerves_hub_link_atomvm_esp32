@@ -8,3 +8,24 @@
 # Only needed with AVM_USE_LIBSODIUM=ON. Harmless otherwise, at the cost of
 # some RAM.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# OTA needs two TLS connections open at once: the NervesHub channel
+# (websocket_client) and the firmware download, which lands on a different
+# host (S3-compatible storage), so it can't reuse the channel's socket. Each
+# mbedTLS session otherwise reserves fixed TX/RX buffers (16KB in + 4KB out
+# by default, MBEDTLS_ASYMMETRIC_CONTENT_LEN) for as long as it is open, so
+# two sessions at once can outrun a device with only tens of KB of free heap
+# -- the mostly-idle channel connection is still holding its full buffers
+# when the download tries to open its own.
+#
+# Dynamic buffers allocate TX/RX only while actively sending/receiving and
+# free them right after, so an idle channel gives most of that memory back
+# instead of holding it for the life of the connection.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+
+# Frees each connection's certificate/key material after the TLS handshake
+# rather than keeping it resident for the life of the session -- relevant
+# here because the channel connection is mTLS (holds both the device's
+# client cert/key and the CA it verifies the server against).
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y
