@@ -208,7 +208,7 @@ init(Config, Owner) ->
         updates => maps:get(updates, Config, auto),
         firmware_keys => stash_keys(maps:get(firmware_keys, Config, [])),
         reboot => maps:get(reboot, Config, auto),
-        console => nh_console:new(),
+        console => nh_console:new(maps:get(console_commands, Config, [])),
         extensions => Extensions,
         %% Status updates made while the socket was closed for a download.
         deferred => [],

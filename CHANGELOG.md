@@ -73,6 +73,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   passed to the transport. ESP-IDF's default is every 10 seconds, which on a
   metered link (a cellular modem, say) costs more than the heartbeats;
   NervesHub needs only the heartbeats to keep the socket.
+- `console_commands` adds the application's own console commands, as `{Name,
+  Description, Fun}` or `{Section, Name, Description, Fun}`. `help` lists the
+  commands by section (`device`, `network`, then the application's); one with a
+  built-in's name replaces it, and one that raises prints the error.
 
 ## [0.2.0] - 2026-09-24
 
