@@ -328,6 +328,36 @@ a_socket_with_room_stays_open_for_the_download_test() ->
 
     nh_agent:stop(Agent).
 
+%% NervesHub offers an update again only on a join. With the socket open
+%% throughout, progress and the failure go out at once, and then it
+%% reconnects so that the next join asks again.
+a_failure_with_the_socket_open_reconnects_after_reporting_test() ->
+    {Agent, JoinRef} = join(#{updater => nh_ota_progress_failed}),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({update_started, _Pid}, next_event(1000)),
+
+    Progress = wait_for_event(<<"update_progress">>, 1000),
+    ?assertEqual(42, maps:get(<<"value">>, Progress)),
+
+    ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
+    Reported = wait_for_event(<<"status_update">>, 1000),
+    ?assertEqual(<<"no_flash_access">>, maps:get(<<"reason">>, Reported)),
+
+    receive
+        closed -> ok
+    after 3000 -> erlang:error(never_rejoined)
+    end,
+    _ = next_opened(),
+
+    nh_agent:stop(Agent).
+
 %% The application frees its memory before the download starts.
 before_update_runs_before_the_download_test() ->
     Self = self(),

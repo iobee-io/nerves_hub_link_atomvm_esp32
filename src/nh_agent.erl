@@ -118,6 +118,10 @@
 -define(GONE_TIMEOUT_MS, 5000).
 -define(RECLAIM_MS, 200).
 
+%% How long a failure's report gets to leave before the socket that stayed
+%% open reconnects, so that NervesHub offers the update again.
+-define(REJOIN_MS, 1000).
+
 -type config() :: #{
     url => binary() | string(),
     host => binary() | string(),
@@ -326,7 +330,7 @@ disconnect(#{transport := Transport, handle := Handle} = State0) ->
     State2 = lists:foldl(
         fun cancel_timer/2,
         State1,
-        [heartbeat, connect_timeout, extensions_fallback, log_flush]
+        [heartbeat, connect_timeout, extensions_fallback, log_flush, rejoin]
     ),
     State2#{
         handle => undefined,
@@ -368,6 +372,10 @@ fire(trial_deadline, State) ->
     trial_expired(State);
 fire(update_idle, State) ->
     update_stalled(State);
+%% Closed as for a download, so the transport is gone and its memory back
+%% before the new connection asks for its own.
+fire(rejoin, State) ->
+    reopen(close_for_download(State));
 fire({request, Kind}, State) ->
     reply_request(Kind, {error, timeout}, State);
 fire({script, Ref}, State) ->
@@ -785,12 +793,20 @@ update_stalled(#{update := Pid} = State) ->
 update_stalled(State) ->
     State.
 
-%% Reported now if the socket stayed open and joined; otherwise on the next join,
-%% which reopening a socket closed for the download is.
+%% Reported now if the socket stayed open and joined; otherwise on the next join.
+%%
+%% NervesHub offers an update again only when the device joins again. With
+%% the socket closed for the download, reopening it is that join; with it kept
+%% open, nothing would ever ask again, so it reconnects once the report has
+%% had time to leave.
 update_failed(Reason, Described, State) ->
     notify(State, {update_failed, Reason}),
     State1 = status_update(<<"failed">>, #{<<"reason">> => Described}, State),
-    reopen(cancel_timer(update_idle, maps:remove(update, State1))).
+    State2 = cancel_timer(update_idle, maps:remove(update, State1)),
+    case maps:get(handle, State2) of
+        undefined -> reopen(State2);
+        _Open -> set_timer(rejoin, ?REJOIN_MS, State2)
+    end.
 
 %% Made while the socket is closed for a download, a status update waits for
 %% the next join; NervesHub would not hear it otherwise.
