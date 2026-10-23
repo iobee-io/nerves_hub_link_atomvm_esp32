@@ -9,6 +9,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `network_interface` may be a function, asked on each join and download,
   for a device that moves between networks without restarting the agent.
+- `nerves_hub_link:flush_logs/2` sends the log lines waiting for a batch, for
+  an application about to restart the device on purpose.
+
+### Changed
+
+- Log lines no longer wait for the batch timer when the device may be about
+  to go down: a line at `error` or worse, and any line while an update
+  downloads, is sent at once, and a `reboot` sends what is waiting first. A
+  batch still waiting went with a panic.
 
 ## [0.2.0] - 2026-09-24
 
