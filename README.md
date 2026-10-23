@@ -212,6 +212,7 @@ connecting or every signature is decades stale. `start/1` refuses with
 | `log_buffer` | 100 | Log lines held before the oldest are dropped |
 | `keep_open_above` | unset: open | Close the socket while an update downloads unless this many bytes are free in one block, or `never` to always close. See [updates](#updates) |
 | `before_update` | none | A function run before a download starts, to free memory |
+| `ping_interval_ms` | the transport's | WebSocket pings; the IDF's are every 10 s |
 | `transport` | `websocket_client` | |
 
 ## Updates

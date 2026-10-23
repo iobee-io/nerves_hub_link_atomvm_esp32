@@ -143,7 +143,8 @@
     log_flush_ms => pos_integer(),
     log_buffer => pos_integer(),
     keep_open_above => non_neg_integer() | never,
-    before_update => fun(() -> ok)
+    before_update => fun(() -> ok),
+    ping_interval_ms => pos_integer()
 }.
 
 -export_type([config/0]).
@@ -1328,7 +1329,13 @@ transport_config(Config, Url) ->
                 Base
         end,
 
-    case maps:get(client_cert, Config, undefined) of
-        undefined -> WithAuth;
-        CertAndKey -> WithAuth#{client_cert => CertAndKey}
+    WithCert =
+        case maps:get(client_cert, Config, undefined) of
+            undefined -> WithAuth;
+            CertAndKey -> WithAuth#{client_cert => CertAndKey}
+        end,
+
+    case maps:get(ping_interval_ms, Config, undefined) of
+        undefined -> WithCert;
+        Ms -> WithCert#{ping_interval_ms => Ms}
     end.

@@ -258,6 +258,7 @@
     heartbeat_ms => pos_integer(),
     keep_open_above => non_neg_integer() | never,
     before_update => fun(() -> ok),
+    ping_interval_ms => pos_integer(),
     transport => module()
 }.
 

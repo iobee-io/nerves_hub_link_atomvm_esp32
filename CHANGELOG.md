@@ -69,6 +69,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `before_update`, a function run before a download starts, to free memory.
 - `{download_resumed, Offset}` to the owner for each resume, which also counts
   as progress against `download_idle_ms`.
+- `ping_interval_ms => Ms` sets how often the socket sends WebSocket pings,
+  passed to the transport. ESP-IDF's default is every 10 seconds, which on a
+  metered link (a cellular modem, say) costs more than the heartbeats;
+  NervesHub needs only the heartbeats to keep the socket.
 
 ## [0.2.0] - 2026-09-24
 
