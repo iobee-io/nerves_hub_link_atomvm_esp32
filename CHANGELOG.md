@@ -7,65 +7,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Events tagged with a pid for a port handle -- the C port of
-  atomvm_websocket_client before nerves-hub/atomvm_websocket_client 40c3917,
-  on AtomVM 0.7 -- are taken for the current connection, so the agent joins
-  with the transport a device was built with, not only a newer one.
-- A socket closed for a download no longer reconnects on its old
-  transport's `closed`, which the pid alias above let through: the second TLS
-  session ran a board without PSRAM out of memory halfway through.
 - `network_interface` may be a function, asked on each join and download,
   for a device that moves between networks without restarting the agent.
 - `nerves_hub_link:flush_logs/2` sends the log lines waiting for a batch, for
   an application about to restart the device on purpose.
-
-### Changed
-
-- Log lines no longer wait for the batch timer when the device may be about
-  to go down: a line at `error` or worse, and any line while an update
-  downloads, is sent at once, and a `reboot` sends what is waiting first. A
-  batch still waiting went with a panic.
-### Fixed
-
-- A send the transport refused with anything but `{error, _}` crashed the
-  agent, and its owner with it: atomvm_websocket_client's port, before
-  nerves-hub/atomvm_websocket_client#3, answered a bare `not_connected` when
-  the socket closed under a queued send. Any refusal is now
-  `{send_failed, Reason}`.
-### Fixed
-
-- `capture_io` with `register` captures by the name, through one capture
-  registered as `nh_io_capture`. An agent started again under the name used to
-  get a new capture each time, and the old one stayed alive sending to the dead
-  agent, along with every process that had inherited it.
-### Fixed
-
-- Console output goes up in pieces of at most 256 bytes. Each `up` is
-  JSON-encoded in the agent, which on AtomVM costs the process many times the
-  output's size in heap: a 2 KB answer with quotes in it took more than an
-  ESP32 without PSRAM had in one block, and the device panicked.
-### Changed
-
-- An armed update counts as busy until the reboot: offered again before then,
-  it is not downloaded into the other slot, which by then holds the previous
-  firmware.
-- A failed update with the socket open reconnects a second later, since
-  NervesHub offers an update again only on a join; nothing asked again before.
-- A status update made while the device is not joined (`started`, `completed`,
-  `failed`) waits for the next join, in order, rather than being dropped.
-- A download resumes for as long as connections keep bringing bytes, in place
-  of five retries in all. Each connection is read with a deadline,
-  `resume_after_ms` (10 s): one that goes quiet, fails or closes short is
-  dropped and the rest asked for with `Range`. It gives up after `resumes` (3)
-  connections in a row that brought no new byte, waiting `resume_after_ms`
-  times that count before each. Over a cellular modem every connection carried
-  20-200 KB and then went silent, and the retries ran out on a slow day.
-  `max_retries` and `retry_backoff` are gone, and errors are no longer wrapped
-  in `download_failed`: the reason is what failed (`{connect_failed, _}`,
-  `{http_status, 503}`, `download_stalled`).
-
-### Added
-
 - `keep_open_above` closes the socket while an update downloads, unless the
   largest free block of heap is at least that many bytes (`never`: always), and
   reopens it afterwards. An ESP32 without PSRAM has room for one TLS session,
@@ -96,10 +41,60 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   callback that fails leaves what was raised as it was.
 - `alarms => Fun` alone puts the application's alarms on the health report,
   which sent `#{}` before.
+- iobee: `{download_pause, Ms}` to the owner as a download ends: the longest it
+  went without progress.
 
 ### Changed
 
+- Log lines no longer wait for the batch timer when the device may be about
+  to go down: a line at `error` or worse, and any line while an update
+  downloads, is sent at once, and a `reboot` sends what is waiting first. A
+  batch still waiting went with a panic.
+- An armed update counts as busy until the reboot: offered again before then,
+  it is not downloaded into the other slot, which by then holds the previous
+  firmware.
+- A failed update with the socket open reconnects a second later, since
+  NervesHub offers an update again only on a join; nothing asked again before.
+- A status update made while the device is not joined (`started`, `completed`,
+  `failed`) waits for the next join, in order, rather than being dropped.
+- A download resumes for as long as connections keep bringing bytes, in place
+  of five retries in all. Each connection is read with a deadline,
+  `resume_after_ms` (10 s): one that goes quiet, fails or closes short is
+  dropped and the rest asked for with `Range`. It gives up after `resumes` (3)
+  connections in a row that brought no new byte, waiting `resume_after_ms`
+  times that count before each. Over a cellular modem every connection carried
+  20-200 KB and then went silent, and the retries ran out on a slow day.
+  `max_retries` and `retry_backoff` are gone, and errors are no longer wrapped
+  in `download_failed`: the reason is what failed (`{connect_failed, _}`,
+  `{http_status, 503}`, `download_stalled`).
 - `extensions => all` includes `alarms`.
+- iobee: the download starts `ssl` and connects with `verify_none`, since
+  AtomVM's client has no `verify_peer` yet (atomvm/AtomVM#2401); the sha256
+  still checks the archive. mbedTLS buffers are dynamic, so an idle channel
+  gives its memory back during a download.
+
+### Fixed
+
+- Events tagged with a pid for a port handle -- the C port of
+  atomvm_websocket_client before nerves-hub/atomvm_websocket_client 40c3917,
+  on AtomVM 0.7 -- are taken for the current connection, so the agent joins
+  with the transport a device was built with, not only a newer one.
+- A socket closed for a download no longer reconnects on its old
+  transport's `closed`, which the pid alias above let through: the second TLS
+  session ran a board without PSRAM out of memory halfway through.
+- A send the transport refused with anything but `{error, _}` crashed the
+  agent, and its owner with it: atomvm_websocket_client's port, before
+  nerves-hub/atomvm_websocket_client#3, answered a bare `not_connected` when
+  the socket closed under a queued send. Any refusal is now
+  `{send_failed, Reason}`.
+- `capture_io` with `register` captures by the name, through one capture
+  registered as `nh_io_capture`. An agent started again under the name used to
+  get a new capture each time, and the old one stayed alive sending to the dead
+  agent, along with every process that had inherited it.
+- Console output goes up in pieces of at most 256 bytes. Each `up` is
+  JSON-encoded in the agent, which on AtomVM costs the process many times the
+  output's size in heap: a 2 KB answer with quotes in it took more than an
+  ESP32 without PSRAM had in one block, and the device panicked.
 
 ## [0.2.0] - 2026-09-24
 
