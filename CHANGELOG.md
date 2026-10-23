@@ -18,6 +18,13 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to go down: a line at `error` or worse, and any line while an update
   downloads, is sent at once, and a `reboot` sends what is waiting first. A
   batch still waiting went with a panic.
+### Fixed
+
+- A send the transport refused with anything but `{error, _}` crashed the
+  agent, and its owner with it: atomvm_websocket_client's port, before
+  nerves-hub/atomvm_websocket_client#3, answered a bare `not_connected` when
+  the socket closed under a queued send. Any refusal is now
+  `{send_failed, Reason}`.
 
 ## [0.2.0] - 2026-09-24
 
