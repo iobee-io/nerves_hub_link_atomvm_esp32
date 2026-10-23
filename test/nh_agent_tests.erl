@@ -305,6 +305,7 @@ an_available_update_is_downloaded_and_failures_reported_test() ->
 
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
+    ?assertMatch({download_pause, _}, next_event(2000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
 
     %% Accepted first, and the failure then goes back to NervesHub rather than
@@ -331,6 +332,7 @@ a_resumed_download_is_not_given_up_test() ->
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
     ?assertMatch({update_started, _}, next_event(1000)),
     ?assertEqual({download_resumed, 4096}, next_event(1000)),
+    ?assertMatch({download_pause, _}, next_event(2000)),
     ?assertEqual({update_ready, <<"alt.avm">>}, next_event(1000)),
 
     nh_agent:stop(Agent).
@@ -388,6 +390,7 @@ a_socket_closed_for_the_download_reports_after_the_next_join_test() ->
     %% Off a device there is no block to measure.
     ?assertEqual({download_socket, closed, undefined}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
+    ?assertMatch({download_pause, _}, next_event(2000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
 
     %% Accepted first, before the socket closes for the download.
@@ -422,6 +425,7 @@ a_socket_with_room_stays_open_for_the_download_test() ->
     ?assertMatch({message, <<"update">>, _}, next_event(1000)),
     ?assertEqual({download_socket, open, undefined}, next_event(1000)),
     ?assertMatch({update_started, _Pid}, next_event(1000)),
+    ?assertMatch({download_pause, _}, next_event(2000)),
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
     _Received = wait_for_event(<<"status_update">>, 1000),
     Reported = wait_for_event(<<"status_update">>, 1000),
@@ -448,6 +452,8 @@ a_failure_with_the_socket_open_reconnects_after_reporting_test() ->
 
     Progress = wait_for_event(<<"update_progress">>, 1000),
     ?assertEqual(42, maps:get(<<"value">>, Progress)),
+
+    ?assertMatch({download_pause, _}, next_event(2000)),
 
     ?assertMatch({update_failed, no_flash_access}, next_event(2000)),
     Reported = wait_for_event(<<"status_update">>, 1000),
@@ -937,6 +943,59 @@ events() ->
         no_event -> [];
         Event -> [Event | events()]
     end.
+%% A download that keeps making progress is left alone even when it takes
+%% several times the stall limit: the limit is idle time, not total time.
+a_slow_download_that_keeps_going_is_not_given_up_test() ->
+    {Agent, JoinRef} = join(#{
+        updater => nh_ota_slow,
+        download_idle_ms => 200,
+        download_resume_after_ms => 50,
+        download_resumes => 1
+    }),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    ?assertMatch({update_started, _}, next_event(1000)),
+    %% The longest pause, reported as it ends: about the 60 ms between steps.
+    {download_pause, Pause} = next_event(2000),
+    ?assert(Pause >= 40 andalso Pause < 200),
+    ?assertEqual({update_ready, <<"alt.avm">>}, next_event(2000)),
+    %% Past the last timer: one left over from the download says nothing.
+    timer:sleep(300),
+    ?assertEqual(no_event, next_event(100)),
+
+    nh_agent:stop(Agent).
+
+%% A download that stops making progress is stopped and reported as failed,
+%% rather than holding the update -- and the device -- forever.
+a_stalled_download_is_given_up_test() ->
+    {Agent, JoinRef} = join(#{
+        updater => nh_ota_stalled,
+        download_idle_ms => 200,
+        download_resume_after_ms => 50,
+        download_resumes => 1
+    }),
+
+    send_update(Agent, JoinRef, #{
+        <<"update_available">> => true,
+        <<"firmware_url">> => <<"http://example.com/fw.avm">>,
+        <<"size">> => 1024,
+        <<"checksum">> => <<"abc">>
+    }),
+    ?assertMatch({message, <<"update">>, _}, next_event(1000)),
+    {update_started, Pid} = next_event(1000),
+    %% A stall is a pause at least as long as the limit.
+    {download_pause, Pause} = next_event(2000),
+    ?assert(Pause >= 200),
+    ?assertEqual({update_failed, download_stalled}, next_event(2000)),
+    ?assertNot(is_process_alive(Pid)),
+
+    nh_agent:stop(Agent).
 
 %% `update_available => false' is NervesHub saying there is nothing to do.
 an_unavailable_update_starts_nothing_test() ->

@@ -79,6 +79,10 @@
 %% NervesHub while the socket was closed -- that it started, completed or
 %% failed -- goes once the device has joined again.
 %%
+%% As the download ends, done, failed or stalled, the owner hears
+%% `{download_pause, Ms}': the longest it went without progress, to tell a slow
+%% link from one that stops now and then.
+%%
 %% `before_update => Fun' is called before any of this, so the application can
 %% free memory first (its own TLS connections, say); it hears `update_failed'
 %% if the update does not happen, including when `Fun' does not return `ok'.
@@ -905,7 +909,7 @@ download(Payload, State) ->
     Updater = maps:get(updater, maps:get(config, State1), nh_ota),
     Pid = Updater:start_update(Payload, self(), download_opts(State1)),
     notify(State1, {update_started, Pid}),
-    download_alive(State1#{update => Pid}).
+    download_alive(State1#{update => Pid, progress_at => now_ms(), longest_pause => 0}).
 
 %% The application's chance to free memory for the download (stop its own TLS
 %% connections, say) before the heap is measured and the download starts. It
@@ -1011,9 +1015,16 @@ download_opts(#{config := Config} = State) ->
             [{Opt, maps:get(Key, Config)} || {Opt, Key} <- Passed, is_map_key(Key, Config)]
     ).
 
-%% Everything the downloader says is a sign it is still getting somewhere.
-download_alive(State) ->
-    set_timer(update_idle, download_idle_ms(State), State).
+%% Everything the downloader says is a sign it is still getting somewhere. The
+%% longest wait between two of them is reported as the download ends.
+download_alive(#{progress_at := At} = State) ->
+    Now = now_ms(),
+    Longest = max(Now - At, maps:get(longest_pause, State, 0)),
+    set_timer(
+        update_idle,
+        download_idle_ms(State),
+        State#{progress_at => Now, longest_pause => Longest}
+    ).
 
 %% Never shorter than the downloader may stay quiet while it still has resumes
 %% left: a device on a slow link that raises `download_resume_after_ms' would
@@ -1021,6 +1032,13 @@ download_alive(State) ->
 download_idle_ms(#{config := Config} = State) ->
     Configured = maps:get(download_idle_ms, Config, ?DEFAULT_DOWNLOAD_IDLE_MS),
     max(Configured, nh_ota:quiet_limit(download_opts(State))).
+
+%% Up to now: a download that ends, or stalls, after a long pause counts it.
+report_pause(#{progress_at := At} = State) ->
+    Pause = max(now_ms() - At, maps:get(longest_pause, State, 0)),
+    notify(State, {download_pause, Pause});
+report_pause(_State) ->
+    ok.
 
 updater_message(Pid, Message, #{update := Pid} = State) ->
     updater(Message, State);
@@ -1053,6 +1071,7 @@ updater({ok, Slot}, State) ->
     %% Written and armed, not yet running. Rebooting is the application's
     %% call: it may have work to finish first, and a library that restarts a
     %% device on its own is a library that surprises someone.
+    report_pause(State),
     notify(State, {update_ready, Slot}),
     ok = remember_armed(),
     %% Two `maps:remove/2' rather than `maps:without/2', which AtomVM lacks.
@@ -1087,6 +1106,7 @@ update_stalled(State) ->
 %% backoff: the download that needed its memory is over, and closed, the device
 %% is out of reach for as long as an hour.
 update_failed(Reason, Described, State) ->
+    report_pause(State),
     notify(State, {update_failed, Reason}),
     State1 = status_update(<<"failed">>, #{<<"reason">> => Described}, State),
     State2 = cancel_timer(update_idle, maps:remove(update, State1)),
