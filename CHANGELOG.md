@@ -46,6 +46,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A batch of log lines also stops at 4096 bytes of messages, not only at 100
+  lines; the rest goes at the next flush. A batch is encoded in one go right
+  after a rejoin, when the TLS handshake has just taken its share of the heap,
+  and a hundred lines of a few hundred bytes each ran an ESP32 without PSRAM
+  out of memory there. The first line always goes, however long.
 - Log lines no longer wait for the batch timer when the device may be about
   to go down: a line at `error` or worse, and any line while an update
   downloads, is sent at once, and a `reboot` sends what is waiting first. A
