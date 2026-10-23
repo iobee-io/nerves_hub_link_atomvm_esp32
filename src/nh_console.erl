@@ -374,7 +374,7 @@ help(Commands) ->
                 ?EOL
             ]
          || Section <- Sections
-        ]
+        ] ++ [<<"help lists this; `COMMAND help` explains one, where it has more">>, ?EOL]
     ).
 
 %% The application's, or else a built-in one.
