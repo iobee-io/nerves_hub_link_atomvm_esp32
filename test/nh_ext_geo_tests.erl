@@ -57,10 +57,10 @@ a_location_fun_answers_without_a_lookup_test() ->
     Fix = #{<<"source">> => <<"gps">>, <<"latitude">> => -22.9163, <<"longitude">> => -47.0453},
     ?assertEqual(Fix, nh_ext_geo:located(fun() -> Fix end)).
 
-a_location_fun_without_a_fix_is_reported_test() ->
-    Location = nh_ext_geo:located(fun() -> undefined end),
-    ?assertEqual(<<"NO_LOCATION">>, maps:get(<<"error_code">>, Location)),
-    ?assertEqual(<<"no_fix">>, maps:get(<<"error_description">>, Location)).
+%% Nothing to send: NervesHub's page then offers to set the location by hand,
+%% which it does not over an error.
+a_location_fun_without_a_fix_sends_nothing_test() ->
+    ?assertEqual(undefined, nh_ext_geo:located(fun() -> undefined end)).
 
 a_location_fun_that_raises_is_reported_test() ->
     Location = nh_ext_geo:located(fun() -> error(gone) end),

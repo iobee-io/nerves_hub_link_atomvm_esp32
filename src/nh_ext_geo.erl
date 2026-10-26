@@ -27,6 +27,10 @@
 %% <<"longitude">> => ..}', or `undefined' while it has none, and the lookup
 %% is not made at all: no second TLS session, no request to the service.
 %%
+%% `undefined' sends nothing. NervesHub's device page offers to set the
+%% location by hand only when it has none, and an error in its place hides
+%% that: a device without a fix is better left blank than reported.
+%%
 %% == Running it ==
 %%
 %% `resolve/0' makes a network request and blocks until it finishes, so it must
@@ -61,7 +65,8 @@ event() -> <<"geo:location:update">>.
 default_url() -> ?DEFAULT_URL.
 
 %%-----------------------------------------------------------------------------
-%% @doc Resolve in a separate process, sending `{nh_ext_geo, Pid, Location}'.
+%% @doc Resolve in a separate process, sending `{nh_ext_geo, Pid, Location}',
+%% where `Location' is `undefined' when there is nothing to send.
 %% @end
 %%-----------------------------------------------------------------------------
 -spec start_resolve(pid()) -> pid().
@@ -82,16 +87,16 @@ start_resolve(Owner, Source) when is_function(Source, 0) ->
 %%-----------------------------------------------------------------------------
 %% @doc The payload for what the application's `location' fun returns.
 %%
-%% `undefined' — no fix yet — is reported as `NO_LOCATION', and a fun that
-%% raises as `SOURCE_ERROR': either way the platform says why there is no
-%% pin, where silence would look like a device that was never asked.
+%% `undefined' — no fix yet — stays `undefined', and nothing is sent: the
+%% page keeps offering to set the location by hand. A fun that raises is a
+%% bug rather than a missing fix, and is reported as `SOURCE_ERROR'.
 %% @end
 %%-----------------------------------------------------------------------------
--spec located(fun(() -> map() | undefined)) -> map().
+-spec located(fun(() -> map() | undefined)) -> map() | undefined.
 located(Source) ->
     try Source() of
         Location when is_map(Location) -> Location;
-        undefined -> error_payload(<<"NO_LOCATION">>, no_fix);
+        undefined -> undefined;
         Other -> error_payload(<<"SOURCE_ERROR">>, {bad_location, Other})
     catch
         Class:Reason -> error_payload(<<"SOURCE_ERROR">>, {Class, Reason})
