@@ -78,6 +78,12 @@
 %% and sends what changed; see `nh_ext_alarms'. It keeps asking while offline,
 %% so an alarm raised then keeps the time it was raised.
 %%
+%% == Geo ==
+%%
+%% With the `geo' extension enabled, NervesHub asks where the device is. With a
+%% `location => Fun', the answer is what `Fun()' returns; without one, a GeoIP
+%% lookup; see `nh_ext_geo'.
+%%
 %% == Error reports ==
 %%
 %% With the `error_reports' extension enabled, a crash `nh_logger' sees, and a
@@ -1138,8 +1144,8 @@ run_extension_actions(Actions, State) ->
 
 run_extension_action({push, Event, Payload}, State) ->
     push_extension(Event, Payload, State);
-run_extension_action({resolve_location}, State) ->
-    _ = nh_ext_geo:start_resolve(self()),
+run_extension_action({resolve_location}, #{config := Config} = State) ->
+    _ = nh_ext_geo:start_resolve(self(), maps:get(location, Config, undefined)),
     State;
 run_extension_action(Other, State) ->
     notify(State, Other),

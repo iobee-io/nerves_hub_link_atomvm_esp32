@@ -7,6 +7,9 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `location => Fun` answers the `geo` extension's request with what the
+  application knows (a GPS fix, say) instead of a GeoIP lookup: no second TLS
+  session. `undefined` (no fix yet) is reported as `NO_LOCATION`.
 - The `error_reports` extension (0.1.0): with `extensions => [error_reports]`,
   each crash report `proc_lib` logs goes to NervesHub as a structured report
   (kind, reason, frames, and free heap in `context`), grouped by the platform
