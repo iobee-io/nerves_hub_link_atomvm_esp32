@@ -306,6 +306,8 @@ loop(State) ->
     receive
         {websocket, Handle, Event} ->
             loop(socket_event(Handle, Event, State));
+        {nh_ext_geo, _Pid, undefined} ->
+            loop(State);
         {nh_ext_geo, _Pid, Location} ->
             loop(push_extension(nh_ext_geo:event(), Location, State));
         {nh_ota, Pid, Message} ->
