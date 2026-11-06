@@ -348,7 +348,9 @@ lw(Tag, State) ->
         end,
     _ =
         case Now < Last - 1024 of
-            true -> erlang:display({lw, Now div 1024, (Last - Now) div 1024, Tag});
+            true ->
+                {memory, Mem} = erlang:process_info(self(), memory),
+                erlang:display({lw, Now div 1024, (Last - Now) div 1024, {agent_heap, Mem div 1024}, Tag});
             false -> ok
         end,
     _ = put(lw_last, min(Now, Last)),
