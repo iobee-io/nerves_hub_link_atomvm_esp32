@@ -305,23 +305,23 @@ loop(State) ->
 
     receive
         {websocket, Handle, Event} ->
-            loop(socket_event(Handle, Event, State));
+            loop(lw({ws, lw_tag(Event)}, socket_event(Handle, Event, State)));
         {nh_ext_geo, _Pid, undefined} ->
             loop(State);
         {nh_ext_geo, _Pid, Location} ->
             loop(push_extension(nh_ext_geo:event(), Location, State));
         {nh_ota, Pid, Message} ->
-            loop(updater_message(Pid, Message, State));
+            loop(lw({ota, lw_tag(Message)}, updater_message(Pid, Message, State)));
         {nh_scripts, Ref, Result} ->
             loop(script_finished(Ref, Result, State));
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(process_down(Pid, Reason, State));
         {push_extension, Event, Payload} ->
-            loop(extension_out(Event, Payload, State));
+            loop(lw({out, Event, lw_tag(Payload)}, extension_out(Event, Payload, State)));
         {push, Event, Payload} ->
-            loop(push_event(Event, Payload, State));
+            loop(lw({push, Event}, push_event(Event, Payload, State)));
         {call, From, Tag, Request} ->
-            loop(call(Request, From, Tag, State));
+            loop(lw({call, lw_tag(Request)}, call(Request, From, Tag, State)));
         {update_decision, Decision} ->
             loop(update_decision(Decision, State));
         stop ->
@@ -334,8 +334,31 @@ loop(State) ->
             notify(State, {unexpected, Other}),
             loop(State)
     after Timeout ->
-        loop(fire(Timer, cancel_timer(Timer, State)))
+        loop(lw({fire, Timer}, fire(Timer, cancel_timer(Timer, State))))
     end.
+
+%% PROBE iobee_bee#92 (do not merge): each agent event that lowered the heap's
+%% minimum by 1 KB or more, on the serial console.
+lw(Tag, State) ->
+    Now = erlang:system_info(esp32_minimum_free_size),
+    Last =
+        case get(lw_last) of
+            undefined -> Now;
+            L -> L
+        end,
+    _ =
+        case Now < Last - 1024 of
+            true -> erlang:display({lw, Now div 1024, (Last - Now) div 1024, Tag});
+            false -> ok
+        end,
+    _ = put(lw_last, min(Now, Last)),
+    State.
+
+lw_tag({text, Text}) -> {text, binary:part(Text, 0, min(70, byte_size(Text)))};
+lw_tag(#{<<"message">> := M}) when is_binary(M) -> binary:part(M, 0, min(50, byte_size(M)));
+lw_tag(T) when is_tuple(T) -> element(1, T);
+lw_tag(T) when is_atom(T) -> T;
+lw_tag(_) -> other.
 
 %% ------------------------------------------------------------------ the socket
 
