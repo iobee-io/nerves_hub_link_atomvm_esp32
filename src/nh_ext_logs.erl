@@ -56,7 +56,7 @@
 %% A hundred lines of a few hundred bytes each ran a board without PSRAM out of
 %% memory there, so a batch also stops at this many bytes of messages and the
 %% rest waits for the next flush.
--define(MAX_BATCH_BYTES, 4096).
+-define(MAX_BATCH_BYTES, 1024).
 
 %% NervesHub truncates a message longer than this, and on an ESP32 a line that
 %% long is more likely a runaway `~p' than something worth the heap.
