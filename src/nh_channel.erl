@@ -339,7 +339,16 @@ next_ref(#{ref := Ref} = State) ->
     {integer_to_binary(Ref), State#{ref => Ref + 1}}.
 
 frame(JoinRef, Ref, Topic, Event, Payload) ->
-    iolist_to_binary(json:encode([JoinRef, Ref, Topic, Event, Payload])).
+    %% PROBE iobee_bee#92 (do not merge): the encode's cost to the heap minimum.
+    Before = erlang:system_info(esp32_minimum_free_size),
+    Frame = iolist_to_binary(json:encode([JoinRef, Ref, Topic, Event, Payload])),
+    After = erlang:system_info(esp32_minimum_free_size),
+    _ =
+        case Before - After >= 512 of
+            true -> erlang:display({lw_encode, Event, byte_size(Frame), After div 1024, (Before - After) div 1024});
+            false -> ok
+        end,
+    Frame.
 
 decode(Text) ->
     try json:decode(Text) of

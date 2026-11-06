@@ -519,7 +519,15 @@ run_action({send, Frame}, State) ->
         undefined ->
             State;
         Handle ->
-            case Transport:send_text(Handle, Frame) of
+            Before = erlang:system_info(esp32_minimum_free_size),
+            Sent = Transport:send_text(Handle, Frame),
+            After = erlang:system_info(esp32_minimum_free_size),
+            _ =
+                case Before - After >= 512 of
+                    true -> erlang:display({lw_send, byte_size(Frame), After div 1024, (Before - After) div 1024});
+                    false -> ok
+                end,
+            case Sent of
                 ok ->
                     State;
                 {error, Reason} ->
