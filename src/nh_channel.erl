@@ -335,13 +335,33 @@ mark_left(Topic, State) ->
         TS -> put_topic(Topic, TS#{joined => false}, State)
     end.
 
+%% A batch of lines is encoded a line at a time: the whole batch in one
+%% `json:encode' grows the agent's heap by several times the frame, all at
+%% once, and on a board without PSRAM that is the lowest point of the boot
+%% (iobee_bee#92). Each line becomes a binary, off the heap, before the next.
+encode_frame(JoinRef, Ref, Topic, Event, #{<<"lines">> := Lines} = Payload) when
+    map_size(Payload) =:= 1, is_list(Lines)
+->
+    Head = iolist_to_binary(json:encode([JoinRef, Ref, Topic, Event])),
+    Open = binary:part(Head, 0, byte_size(Head) - 1),
+    iolist_to_binary([Open, <<",{\"lines\":[">>, encode_lines(Lines, []), <<"]}]">>]);
+encode_frame(JoinRef, Ref, Topic, Event, Payload) ->
+    iolist_to_binary(json:encode([JoinRef, Ref, Topic, Event, Payload])).
+
+encode_lines([], Acc) ->
+    lists:reverse(Acc);
+encode_lines([Line | Rest], []) ->
+    encode_lines(Rest, [iolist_to_binary(json:encode(Line))]);
+encode_lines([Line | Rest], Acc) ->
+    encode_lines(Rest, [iolist_to_binary(json:encode(Line)), <<",">> | Acc]).
+
 next_ref(#{ref := Ref} = State) ->
     {integer_to_binary(Ref), State#{ref => Ref + 1}}.
 
 frame(JoinRef, Ref, Topic, Event, Payload) ->
     %% PROBE iobee_bee#92 (do not merge): the encode's cost to the heap minimum.
     Before = erlang:system_info(esp32_minimum_free_size),
-    Frame = iolist_to_binary(json:encode([JoinRef, Ref, Topic, Event, Payload])),
+    Frame = encode_frame(JoinRef, Ref, Topic, Event, Payload),
     After = erlang:system_info(esp32_minimum_free_size),
     _ =
         case Before - After >= 512 of
