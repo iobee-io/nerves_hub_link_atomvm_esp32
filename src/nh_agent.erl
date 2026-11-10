@@ -305,23 +305,23 @@ loop(State) ->
 
     receive
         {websocket, Handle, Event} ->
-            loop(socket_event(Handle, Event, State));
+            loop(lw({ws, lw_tag(Event)}, socket_event(Handle, Event, State)));
         {nh_ext_geo, _Pid, undefined} ->
             loop(State);
         {nh_ext_geo, _Pid, Location} ->
             loop(push_extension(nh_ext_geo:event(), Location, State));
         {nh_ota, Pid, Message} ->
-            loop(updater_message(Pid, Message, State));
+            loop(lw({ota, lw_tag(Message)}, updater_message(Pid, Message, State)));
         {nh_scripts, Ref, Result} ->
             loop(script_finished(Ref, Result, State));
         {'DOWN', _Ref, process, Pid, Reason} ->
             loop(process_down(Pid, Reason, State));
         {push_extension, Event, Payload} ->
-            loop(extension_out(Event, Payload, State));
+            loop(lw({out, Event, lw_tag(Payload)}, extension_out(Event, Payload, State)));
         {push, Event, Payload} ->
-            loop(push_event(Event, Payload, State));
+            loop(lw({push, Event}, push_event(Event, Payload, State)));
         {call, From, Tag, Request} ->
-            loop(call(Request, From, Tag, State));
+            loop(lw({call, lw_tag(Request)}, call(Request, From, Tag, State)));
         {update_decision, Decision} ->
             loop(update_decision(Decision, State));
         stop ->
@@ -334,8 +334,34 @@ loop(State) ->
             notify(State, {unexpected, Other}),
             loop(State)
     after Timeout ->
-        loop(fire(Timer, cancel_timer(Timer, State)))
+        loop(lw({fire, Timer}, fire(Timer, cancel_timer(Timer, State))))
     end.
+
+lw(Tag, State) ->
+    %% PROBE iobee_bee#92 (do not merge): the largest free block after each
+    %% agent event, when it moved 2 KB or more since the last print.
+    Largest = erlang:system_info(esp32_largest_free_block),
+    Last =
+        case get(lw_last) of
+            undefined -> 0;
+            L -> L
+        end,
+    _ =
+        case abs(Largest - Last) >= 2048 of
+            true ->
+                Free = erlang:system_info(esp32_free_heap_size),
+                erlang:display({frag, Largest div 1024, Free div 1024, Tag}),
+                put(lw_last, Largest);
+            false ->
+                ok
+        end,
+    State.
+
+lw_tag({text, Text}) -> {text, binary:part(Text, 0, min(70, byte_size(Text)))};
+lw_tag(#{<<"message">> := M}) when is_binary(M) -> binary:part(M, 0, min(50, byte_size(M)));
+lw_tag(T) when is_tuple(T) -> element(1, T);
+lw_tag(T) when is_atom(T) -> T;
+lw_tag(_) -> other.
 
 %% ------------------------------------------------------------------ the socket
 
