@@ -91,6 +91,15 @@
 %% default, the oldest dropped first and the drop reported) and sent in a batch
 %% at most once a second, NervesHub's rate; see `nh_ext_error_reports'. Held
 %% through a disconnect, they go when the extension is attached again.
+%%
+%% == Credentials ==
+%%
+%% `client_cert' and `shared_secret' are kept sealed in a fun from the moment
+%% the agent is started, and opened only to build the socket's options. A crash
+%% prints the state of the process, and a fun prints as `#Fun<..>' without
+%% what it closes over: the device's private key stays out of the serial log and
+%% out of the crash report. Either may be given as such a fun already, for a
+%% caller that keeps it sealed as well.
 %% @end
 %%-----------------------------------------------------------------------------
 -module(nh_agent).
@@ -99,7 +108,7 @@
 
 %% Exported so a supervisor or a test can run the loop directly.
 -export([init/2, loop/1]).
--export([keep_open/2]).
+-export([keep_open/2, seal/1]).
 
 %% What this agent tells NervesHub it speaks. 2.4.0 is the version that brings
 %% device-managed updates; below 2.1.0 NervesHub types support scripts into the
@@ -163,8 +172,8 @@
     host => binary() | string(),
     identifier := binary(),
     transport => module(),
-    shared_secret => {binary(), binary()},
-    client_cert => {binary(), binary()},
+    shared_secret => credentials(),
+    client_cert => credentials(),
     verify => term(),
     metadata => map(),
     handler => pid(),
@@ -184,7 +193,10 @@
     download_idle_ms => pos_integer()
 }.
 
--export_type([config/0]).
+%% A pair, or a fun that returns it: see Credentials in the module doc.
+-type credentials() :: {binary(), binary()} | fun(() -> {binary(), binary()}).
+
+-export_type([config/0, credentials/0]).
 
 %%-----------------------------------------------------------------------------
 %% @doc Start the agent, linked to the caller.
@@ -193,12 +205,29 @@
 -spec start_link(config()) -> {ok, pid()} | {error, term()}.
 start_link(Config) ->
     Owner = maps:get(handler, Config, self()),
-    named(spawn_link(?MODULE, init, [Config, Owner]), Config).
+    named(spawn_link(?MODULE, init, [seal(Config), Owner]), Config).
 
 -spec start(config()) -> {ok, pid()} | {error, term()}.
 start(Config) ->
     Owner = maps:get(handler, Config, self()),
-    named(spawn(?MODULE, init, [Config, Owner]), Config).
+    named(spawn(?MODULE, init, [seal(Config), Owner]), Config).
+
+%% @private Before the spawn, so that not even the new process's arguments
+%% hold them. Exported for the tests.
+seal(Config) ->
+    lists:foldl(
+        fun(Key, Acc) ->
+            case maps:find(Key, Acc) of
+                {ok, {_, _} = Pair} -> Acc#{Key := fun() -> Pair end};
+                _ -> Acc
+            end
+        end,
+        Config,
+        [client_cert, shared_secret]
+    ).
+
+unseal(Fun) when is_function(Fun, 0) -> Fun();
+unseal(Pair) -> Pair.
 
 %% `register => Name' gives the agent a name so that something configured
 %% before it existed can find it later -- `nh_logger' is the reason, since a
@@ -1486,7 +1515,7 @@ transport_config(Config, Url) ->
     },
 
     WithAuth =
-        case maps:get(shared_secret, Config, undefined) of
+        case unseal(maps:get(shared_secret, Config, undefined)) of
             {Key, Secret} ->
                 Identifier = maps:get(identifier, Config),
                 Base#{headers => nh_shared_secret:headers(Identifier, Key, Secret)};
@@ -1497,7 +1526,7 @@ transport_config(Config, Url) ->
     WithCert =
         case maps:get(client_cert, Config, undefined) of
             undefined -> WithAuth;
-            CertAndKey -> WithAuth#{client_cert => CertAndKey}
+            Sealed -> WithAuth#{client_cert => unseal(Sealed)}
         end,
 
     case maps:get(ping_interval_ms, Config, undefined) of
