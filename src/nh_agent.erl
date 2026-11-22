@@ -1338,19 +1338,43 @@ maybe_add_console(Channel, Config) ->
 
 %% Console output only goes anywhere if the channel joined, and `push/4'
 %% already refuses on a topic that has not. In pieces: see `nh_console:chunks/2'.
+%%
+%% The frames are encoded in a process of their own. Encoding a chunk builds
+%% several times its size in garbage (every quote in a command's JSON output is
+%% escaped), and on the agent's heap, already the largest on the device, that
+%% garbage makes the heap grow: on AtomVM a heap grows into one contiguous block
+%% of its whole new size, which a device short on memory may not have (an ESP32
+%% without PSRAM ran out of memory there). The helper's heap is only as big as
+%% the work, the frames come back as binaries off any heap, and the garbage goes
+%% with the helper.
 console_out(<<>>, State) ->
     State;
 console_out(Output, State) ->
-    lists:foldl(
-        fun(Chunk, Acc) ->
-            {Channel, Actions} = nh_channel:push(
-                <<"console">>, <<"up">>, #{<<"data">> => Chunk}, maps:get(channel, Acc)
-            ),
-            run(Actions, Acc#{channel => Channel})
-        end,
-        State,
-        nh_console:chunks(Output, ?CONSOLE_CHUNK)
-    ).
+    Channel0 = maps:get(channel, State),
+    {Channel, Actions} = off_heap(fun() ->
+        push_chunks(nh_console:chunks(Output, ?CONSOLE_CHUNK), Channel0, [])
+    end),
+    run(Actions, State#{channel => Channel}).
+
+push_chunks([], Channel, Actions) ->
+    {Channel, lists:append(lists:reverse(Actions))};
+push_chunks([Chunk | Rest], Channel0, Actions) ->
+    {Channel, More} = nh_channel:push(
+        <<"console">>, <<"up">>, #{<<"data">> => Chunk}, Channel0
+    ),
+    push_chunks(Rest, Channel, [More | Actions]).
+
+%% Fun's result, computed in a process of its own; its exit reason if it fails.
+off_heap(Fun) ->
+    Self = self(),
+    {Pid, Monitor} = spawn_monitor(fun() -> Self ! {self(), Fun()} end),
+    receive
+        {Pid, Result} ->
+            erlang:demonitor(Monitor, [flush]),
+            Result;
+        {'DOWN', Monitor, process, Pid, Reason} ->
+            exit(Reason)
+    end.
 
 %% ------------------------------------------------------------------ helpers
 
