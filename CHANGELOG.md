@@ -24,7 +24,6 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into issues. `nerves_hub_link:report_error/4` reports an error the
   application caught. Reports are held up to `report_buffer` (10) and sent in
   batches at most once a second; a drop is reported.
-
 - `network_interface` may be a function, asked on each join and download,
   for a device that moves between networks without restarting the agent.
 - `ping_interval_ms => Ms` sets how often the socket sends WebSocket pings,
@@ -48,6 +47,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for the download waits the same before it opens again.
 - `before_update`, a function run before a download starts, to free memory.
   One that does not return `ok` fails the update rather than the agent.
+- `console_commands` adds the application's own console commands, as `{Name,
+  Description, Fun}` or `{Section, Name, Description, Fun}`. `help` lists the
+  commands by section (`device`, `network`, then the application's); one with a
+  built-in's name replaces it, and one that raises prints the error. A wrong
+  entry, or one named `help`, is refused at start as
+  `{invalid_console_command, Entry}`.
+- The console's up and down arrows walk through the last 20 lines entered, as
+  a shell does, and `clear` clears the screen (and prints nothing in a support
+  script). A line is at most 256 bytes.
+- The `alarms` extension (0.1.0): with `extensions => [alarms]` and an
+  `alarms => Fun`, the agent asks for the alarms every `alarms_interval_ms`
+  (30 s by default) and sends `alarms:raised` / `alarms:cleared` as they
+  change, and `alarms:snapshot` when NervesHub sends `alarms:sync`. Alarms
+  raised while offline keep the time they were raised. With it attached, the
+  health report leaves the `alarms` key out. A `Fun` of one argument is given
+  the set it returned last time, for hysteresis without state of its own; a
+  callback that fails leaves what was raised as it was.
+- `alarms => Fun` alone puts the application's alarms on the health report,
+  which sent `#{}` before.
 
 ### Changed
 
@@ -92,6 +110,17 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `max_retries` and `retry_backoff` are gone, and errors are no longer wrapped
   in `download_failed`: the reason is what failed (`{connect_failed, _}`,
   `{http_status, 503}`, `download_stalled`).
+- A download resumes for as long as connections keep bringing bytes, in place
+  of five retries in all. Each connection is read with a deadline,
+  `resume_after_ms` (10 s): one that goes quiet, fails or closes short is
+  dropped and the rest asked for with `Range`. It gives up after `resumes` (3)
+  connections in a row that brought no new byte, waiting `resume_after_ms`
+  times that count before each. Over a cellular modem every connection carried
+  20-200 KB and then went silent, and the retries ran out on a slow day.
+  `max_retries` and `retry_backoff` are gone, and errors are no longer wrapped
+  in `download_failed`: the reason is what failed (`{connect_failed, _}`,
+  `{http_status, 503}`, `download_stalled`).
+- `extensions => all` includes `alarms`.
 
 ### Fixed
 
@@ -104,53 +133,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   JSON-encoded in the agent, which on AtomVM costs the process many times the
   output's size in heap: a 2 KB answer with quotes in it took more than an
   ESP32 without PSRAM had in one block, and the device panicked.
-### Fixed
-
 - `capture_io` with `register => Name` captures by the name, through one
   capture per name registered as `nh_io_capture_Name`; agents under other names
   have their own. An agent started again under the name used to
   get a new capture each time, and the old one stayed alive sending to the dead
   agent, along with every process that had inherited it.
-### Changed
-
-- A download resumes for as long as connections keep bringing bytes, in place
-  of five retries in all. Each connection is read with a deadline,
-  `resume_after_ms` (10 s): one that goes quiet, fails or closes short is
-  dropped and the rest asked for with `Range`. It gives up after `resumes` (3)
-  connections in a row that brought no new byte, waiting `resume_after_ms`
-  times that count before each. Over a cellular modem every connection carried
-  20-200 KB and then went silent, and the retries ran out on a slow day.
-  `max_retries` and `retry_backoff` are gone, and errors are no longer wrapped
-  in `download_failed`: the reason is what failed (`{connect_failed, _}`,
-  `{http_status, 503}`, `download_stalled`).
-
-### Added
-
-- `{download_resumed, Offset}` to the owner for each resume, which also counts
-  as progress against `download_idle_ms`.
-- `console_commands` adds the application's own console commands, as `{Name,
-  Description, Fun}` or `{Section, Name, Description, Fun}`. `help` lists the
-  commands by section (`device`, `network`, then the application's); one with a
-  built-in's name replaces it, and one that raises prints the error. A wrong
-  entry, or one named `help`, is refused at start as
-  `{invalid_console_command, Entry}`.
-- The console's up and down arrows walk through the last 20 lines entered, as
-  a shell does, and `clear` clears the screen (and prints nothing in a support
-  script). A line is at most 256 bytes.
-- The `alarms` extension (0.1.0): with `extensions => [alarms]` and an
-  `alarms => Fun`, the agent asks for the alarms every `alarms_interval_ms`
-  (30 s by default) and sends `alarms:raised` / `alarms:cleared` as they
-  change, and `alarms:snapshot` when NervesHub sends `alarms:sync`. Alarms
-  raised while offline keep the time they were raised. With it attached, the
-  health report leaves the `alarms` key out. A `Fun` of one argument is given
-  the set it returned last time, for hysteresis without state of its own; a
-  callback that fails leaves what was raised as it was.
-- `alarms => Fun` alone puts the application's alarms on the health report,
-  which sent `#{}` before.
-
-### Changed
-
-- `extensions => all` includes `alarms`.
 
 ## [0.2.0] - 2026-09-24
 
