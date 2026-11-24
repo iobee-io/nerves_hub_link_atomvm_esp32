@@ -7,6 +7,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- On an AtomVM with `esp32_internal_largest_free_block` and
+  `esp32_internal_minimum_free_size`, health metrics, error report vitals and
+  the console's `memory` add the same numbers for internal RAM only
+  (`internal_largest_free_block_bytes`, `internal_minimum_free_heap_bytes`):
+  with PSRAM in the heap, the others count megabytes of PSRAM.
 - Events tagged with a pid for a port handle -- the C port of
   atomvm_websocket_client before nerves-hub/atomvm_websocket_client 40c3917,
   on AtomVM 0.7 -- are taken for the current connection, so the agent joins
