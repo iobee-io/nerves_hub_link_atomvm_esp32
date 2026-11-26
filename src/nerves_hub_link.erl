@@ -258,7 +258,7 @@
     verify => crt_bundle | {cacert_pem, binary()} | none,
     console => boolean(),
     console_commands => [nh_console:command()],
-    extensions => all | [health | geo | logging | alarms],
+    extensions => all | [health | geo | logging | alarms | error_reports],
     alarms => fun(() -> #{binary() => binary()}) | fun((map()) -> #{binary() => binary()}),
     location => fun(() -> map() | undefined),
     reboot => auto | manual,

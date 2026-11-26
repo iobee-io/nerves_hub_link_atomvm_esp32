@@ -216,7 +216,9 @@ vitals() ->
      || {Key, Info} <- [
             {<<"free_heap_bytes">>, esp32_free_heap_size},
             {<<"largest_free_block_bytes">>, esp32_largest_free_block},
-            {<<"minimum_free_heap_bytes">>, esp32_minimum_free_size}
+            {<<"minimum_free_heap_bytes">>, esp32_minimum_free_size},
+            {<<"internal_largest_free_block_bytes">>, esp32_internal_largest_free_block},
+            {<<"internal_minimum_free_heap_bytes">>, esp32_internal_minimum_free_size}
         ],
         is_integer(Value = info(Info))
     ]).
